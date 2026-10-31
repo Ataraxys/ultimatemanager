@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:viewModels="clr-namespace:UltimateManager.ViewModels"
+             x:Class="UltimateManager.Views.ClientEditPage"
+             x:DataType="viewModels:ClientEditViewModel"
+             Title="Client">
+    <ScrollView>
+        <VerticalStackLayout Padding="20,16,20,28" Spacing="16">
+            <Label Text="Informations personnelles" Style="{StaticResource SectionTitle}" />
+
+            <VerticalStackLayout Spacing="4">
+                <Label Text="Prénom *" />
+                <Entry Text="{Binding FirstName}"
+                       Placeholder="Prénom"
+                       ReturnType="Next" />
+                <Label Text="{Binding FirstNameError}"
+                       IsVisible="{Binding FirstNameError, Converter={StaticResource StringNotEmptyConverter}}"
+                       TextColor="#C62828"
+                       FontSize="12" />
+            </VerticalStackLayout>
+
+            <VerticalStackLayout Spacing="4">
+                <Label Text="Nom *" />
+                <Entry Text="{Binding LastName}"
+                       Placeholder="Nom"
+                       ReturnType="Next" />
+                <Label Text="{Binding LastNameError}"
+                       IsVisible="{Binding LastNameError, Converter={StaticResource StringNotEmptyConverter}}"
+                       TextColor="#C62828"
+                       FontSize="12" />
+            </VerticalStackLayout>
+
+            <Label Text="Coordonnées" Style="{StaticResource SectionTitle}" />
+            <Entry Text="{Binding PhoneNumber}"
+                   Placeholder="Téléphone"
+                   Keyboard="Telephone"
+                   ReturnType="Next" />
+            <Entry Text="{Binding Email}"
+                   Placeholder="Email"
+                   Keyboard="Email"
+                   ReturnType="Next" />
+
+            <Label Text="Adresse" Style="{StaticResource SectionTitle}" />
+            <Entry Text="{Binding Address}"
+                   Placeholder="Adresse"
+                   ReturnType="Next" />
+            <Grid ColumnDefinitions="*,2*" ColumnSpacing="12">
+                <Entry Text="{Binding PostalCode}"
+                       Placeholder="Code postal"
+                       Keyboard="Numeric"
+                       ReturnType="Next" />
+                <Entry Grid.Column="1"
+                       Text="{Binding City}"
+                       Placeholder="Ville"
+                       ReturnType="Next" />
+            </Grid>
+            <Entry Text="{Binding Country}"
+                   Placeholder="Pays"
+                   ReturnType="Next" />
+
+            <Label Text="Localisation GPS" Style="{StaticResource SectionTitle}" />
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                <Entry Text="{Binding Latitude}"
+                       Placeholder="Latitude"
+                       Keyboard="Numeric"
+                       ReturnType="Next" />
+                <Entry Grid.Column="1"
+                       Text="{Binding Longitude}"
+                       Placeholder="Longitude"
+                       Keyboard="Numeric"
+                       ReturnType="Next" />
+            </Grid>
+
+            <Label Text="Commentaire" Style="{StaticResource SectionTitle}" />
+            <Editor Text="{Binding Comment}"
+                    Placeholder="Ajouter un commentaire"
+                    AutoSize="TextChanges"
+                    MinimumHeightRequest="120" />
+
+            <ActivityIndicator IsRunning="{Binding IsBusy}"
+                               IsVisible="{Binding IsBusy}"
+                               Color="{StaticResource Primary}"
+                               HorizontalOptions="Center" />
+
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                <Button Text="Annuler"
+                        Clicked="OnCancelClicked"
+                        BackgroundColor="{StaticResource Gray200}"
+                        TextColor="{StaticResource Gray900}" />
+                <Button Grid.Column="1"
+                        Text="Enregistrer"
+                        Clicked="OnSaveClicked"
+                        IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBooleanConverter}}" />
+            </Grid>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

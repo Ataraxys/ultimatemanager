@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:viewModels="clr-namespace:UltimateManager.ViewModels"
+             x:Class="UltimateManager.Views.ClientDetailsPage"
+             x:DataType="viewModels:ClientDetailsViewModel"
+             Title="Fiche client">
+    <ScrollView>
+        <VerticalStackLayout Padding="20,16,20,28" Spacing="20">
+            <ActivityIndicator IsRunning="{Binding IsLoading}"
+                               IsVisible="{Binding IsLoading}"
+                               Color="{StaticResource Primary}"
+                               HorizontalOptions="Center" />
+
+            <VerticalStackLayout IsVisible="{Binding CurrentClient, Converter={StaticResource NullToFalseConverter}}"
+                                 Spacing="4">
+                <Label Text="{Binding CurrentClient.FullName}"
+                       FontFamily="OpenSansSemibold"
+                       FontSize="28"
+                       TextColor="{StaticResource Gray900}" />
+                <Label Text="Fiche client"
+                       FontSize="14"
+                       TextColor="{StaticResource Gray500}" />
+            </VerticalStackLayout>
+
+            <Border Padding="16"
+                    Stroke="{StaticResource Gray200}"
+                    StrokeShape="RoundRectangle 16">
+                <VerticalStackLayout Spacing="12">
+                    <Label Text="Informations personnelles"
+                           Style="{StaticResource SectionTitle}" />
+                    <Grid ColumnDefinitions="Auto,*"
+                          RowDefinitions="Auto,Auto"
+                          ColumnSpacing="12"
+                          RowSpacing="8">
+                        <Label Text="Prénom" TextColor="{StaticResource Gray500}" />
+                        <Label Grid.Column="1" Text="{Binding CurrentClient.FirstName}" />
+                        <Label Grid.Row="1" Text="Nom" TextColor="{StaticResource Gray500}" />
+                        <Label Grid.Row="1" Grid.Column="1" Text="{Binding CurrentClient.LastName}" />
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border IsVisible="{Binding HasPhone}"
+                    Padding="16"
+                    Stroke="{StaticResource Gray200}"
+                    StrokeShape="RoundRectangle 16">
+                <VerticalStackLayout Spacing="12">
+                    <Label Text="Téléphone" Style="{StaticResource SectionTitle}" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <Label Text="{Binding CurrentClient.PhoneNumber}"
+                               FontSize="17"
+                               VerticalOptions="Center" />
+                        <Button Text="Appeler"
+                                Grid.Column="1"
+                                Command="{Binding CallCommand}"
+                                HorizontalOptions="End" />
+                    </Grid>
+                    <Label Text="{Binding CurrentClient.Email}"
+                           IsVisible="{Binding CurrentClient.Email, Converter={StaticResource StringNotEmptyConverter}}"
+                           TextColor="{StaticResource Gray500}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border IsVisible="{Binding HasAddress}"
+                    Padding="16"
+                    Stroke="{StaticResource Gray200}"
+                    StrokeShape="RoundRectangle 16">
+                <VerticalStackLayout Spacing="12">
+                    <Label Text="Adresse" Style="{StaticResource SectionTitle}" />
+                    <Label Text="{Binding FullAddress}" FontSize="16" />
+                    <Button Text="Copier l’adresse"
+                            Command="{Binding CopyAddressCommand}"
+                            HorizontalOptions="Start" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border IsVisible="{Binding HasLocation}"
+                    Padding="16"
+                    Stroke="{StaticResource Gray200}"
+                    StrokeShape="RoundRectangle 16">
+                <VerticalStackLayout Spacing="12">
+                    <Label Text="Localisation GPS" Style="{StaticResource SectionTitle}" />
+                    <Label Text="{Binding CurrentClient.Latitude, StringFormat='Latitude : {0}'}" />
+                    <Label Text="{Binding CurrentClient.Longitude, StringFormat='Longitude : {0}'}" />
+                    <Button Text="Ouvrir dans Google Maps"
+                            Command="{Binding OpenMapCommand}"
+                            HorizontalOptions="Start" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border IsVisible="{Binding HasComment}"
+                    Padding="16"
+                    Stroke="{StaticResource Gray200}"
+                    StrokeShape="RoundRectangle 16">
+                <VerticalStackLayout Spacing="12">
+                    <Label Text="Commentaire" Style="{StaticResource SectionTitle}" />
+                    <Label Text="{Binding CurrentClient.Comment}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                <Button Text="Modifier"
+                        Clicked="OnEditClicked"
+                        HorizontalOptions="Fill" />
+                <Button Text="Supprimer"
+                        Grid.Column="1"
+                        Clicked="OnDeleteClicked"
+                        BackgroundColor="#C62828"
+                        HorizontalOptions="Fill" />
+            </Grid>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

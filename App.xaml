@@ -2,9 +2,13 @@
 <Application xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:local="clr-namespace:UltimateManager"
+             xmlns:converters="clr-namespace:UltimateManager.Converters"
              x:Class="UltimateManager.App">
     <Application.Resources>
         <ResourceDictionary>
+            <converters:NullToFalseConverter x:Key="NullToFalseConverter" />
+            <converters:StringNotEmptyConverter x:Key="StringNotEmptyConverter" />
+            <converters:InverseBooleanConverter x:Key="InverseBooleanConverter" />
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Resources/Styles/Colors.xaml" />
                 <ResourceDictionary Source="Resources/Styles/Styles.xaml" />

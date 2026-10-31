@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:models="clr-namespace:UltimateManager.Models"
+             xmlns:viewModels="clr-namespace:UltimateManager.ViewModels"
+             x:Class="UltimateManager.Views.ClientsPage"
+             x:DataType="viewModels:ClientsViewModel"
+             Title="Clients">
+    <Grid Padding="20,16"
+          RowDefinitions="Auto,Auto,*"
+          RowSpacing="16">
+        <VerticalStackLayout Spacing="4">
+            <Label Text="UltimateManager"
+                   FontFamily="OpenSansSemibold"
+                   FontSize="28"
+                   TextColor="{StaticResource Gray900}" />
+            <Label Text="Votre répertoire clients"
+                   FontSize="14"
+                   TextColor="{StaticResource Gray500}" />
+        </VerticalStackLayout>
+
+        <SearchBar Grid.Row="1"
+                   Placeholder="Rechercher un client"
+                   Text="{Binding SearchText}"
+                   SearchCommand="{Binding SearchCommand}"
+                   CancelButtonColor="{StaticResource Primary}" />
+
+        <Grid Grid.Row="2">
+            <CollectionView ItemsSource="{Binding Clients}"
+                            SelectionMode="None">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="models:Client">
+                        <SwipeView Margin="0,0,0,12">
+                            <SwipeView.RightItems>
+                                <SwipeItems>
+                                    <SwipeItem Text="Supprimer"
+                                               BackgroundColor="#C62828"
+                                               Invoked="OnDeleteInvoked" />
+                                </SwipeItems>
+                            </SwipeView.RightItems>
+                            <Border Padding="16"
+                                    BackgroundColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource Gray900}}"
+                                    Stroke="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}"
+                                    StrokeShape="RoundRectangle 16"
+                                    StrokeThickness="1">
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Tapped="OnClientTapped" />
+                                </Border.GestureRecognizers>
+                                <Grid ColumnDefinitions="*,Auto"
+                                      RowDefinitions="Auto,Auto"
+                                      RowSpacing="6">
+                                    <Label Text="{Binding FullName}"
+                                           FontFamily="OpenSansSemibold"
+                                           FontSize="17"
+                                           TextColor="{AppThemeBinding Light={StaticResource Gray900}, Dark={StaticResource White}}" />
+                                    <Label Grid.Row="1"
+                                           Text="{Binding City}"
+                                           FontSize="14"
+                                           TextColor="{StaticResource Gray500}" />
+                                    <Label Grid.Column="1"
+                                           Grid.RowSpan="2"
+                                           Text="{Binding PhoneNumber}"
+                                           FontSize="14"
+                                           VerticalOptions="Center"
+                                           TextColor="{StaticResource Primary}" />
+                                </Grid>
+                            </Border>
+                        </SwipeView>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
+            <VerticalStackLayout IsVisible="{Binding HasNoClients}"
+                                 Spacing="8"
+                                 HorizontalOptions="Center"
+                                 VerticalOptions="Center">
+                <Label Text="Aucun client"
+                       FontFamily="OpenSansSemibold"
+                       FontSize="20"
+                       HorizontalTextAlignment="Center"
+                       TextColor="{StaticResource Gray900}" />
+                <Label Text="Ajoutez votre premier client pour commencer."
+                       FontSize="14"
+                       HorizontalTextAlignment="Center"
+                       TextColor="{StaticResource Gray500}" />
+            </VerticalStackLayout>
+
+            <ActivityIndicator IsRunning="{Binding IsLoading}"
+                               IsVisible="{Binding IsLoading}"
+                               Color="{StaticResource Primary}"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center" />
+
+            <Button Text="+"
+                    Command="{Binding AddCommand}"
+                    FontFamily="OpenSansSemibold"
+                    FontSize="28"
+                    CornerRadius="30"
+                    WidthRequest="60"
+                    HeightRequest="60"
+                    Padding="0"
+                    HorizontalOptions="End"
+                    VerticalOptions="End"
+                    Margin="0,0,4,4"
+                    SemanticProperties.Description="Ajouter un client" />
+        </Grid>
+    </Grid>
+</ContentPage>
