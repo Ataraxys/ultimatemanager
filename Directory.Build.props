@@ -1,0 +1,6 @@
+﻿<Project>
+  <PropertyGroup>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>D:\Android\Build</ArtifactsPath>
+  </PropertyGroup>
+</Project>

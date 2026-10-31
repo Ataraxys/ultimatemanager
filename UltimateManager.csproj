@@ -16,6 +16,8 @@
 		<RootNamespace>UltimateManager</RootNamespace>
 		<UseMaui>true</UseMaui>
 		<SingleProject>true</SingleProject>
+		<PublishRootPath Condition="'$(PublishRootPath)' == ''">D:\Android\Build\publish</PublishRootPath>
+		<PublishDir>$(PublishRootPath)\$(MSBuildProjectName)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\</PublishDir>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 
