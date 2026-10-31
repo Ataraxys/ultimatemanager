@@ -41,4 +41,5 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
     {
         await Shell.Current.GoToAsync("..");
     }
+
 }

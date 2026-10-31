@@ -74,7 +74,9 @@ public partial class ClientDetailsViewModel(IClientService clientService) : Obse
             return;
         }
 
-        var url = $"https://www.google.com/maps/dir/?api=1&destination={latitude.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)},{longitude.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        var latitudeText = latitude.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var longitudeText = longitude.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var url = $"https://www.google.com/maps/search/?api=1&query={latitudeText},{longitudeText}";
         await Launcher.Default.OpenAsync(url);
     }
 

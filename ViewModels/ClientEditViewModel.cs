@@ -6,9 +6,10 @@ using UltimateManager.Services;
 
 namespace UltimateManager.ViewModels;
 
-public partial class ClientEditViewModel(IClientService clientService) : ObservableValidator
+public partial class ClientEditViewModel(IClientService clientService, IMapProvider mapProvider) : ObservableValidator
 {
     private readonly IClientService _clientService = clientService;
+    private readonly IMapProvider _mapProvider = mapProvider;
     private Guid _clientId;
     private DateTime _createdAt;
 
@@ -78,6 +79,42 @@ public partial class ClientEditViewModel(IClientService clientService) : Observa
         OnPropertyChanged(nameof(IsEditing));
         OnPropertyChanged(nameof(FirstNameError));
         OnPropertyChanged(nameof(LastNameError));
+    }
+
+    [RelayCommand]
+    private async Task PickLocationAsync()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        var latitude = TryParseCoordinate(Latitude, out var currentLatitude) ? currentLatitude : null;
+        var longitude = TryParseCoordinate(Longitude, out var currentLongitude) ? currentLongitude : null;
+        var initialLocation = latitude.HasValue && longitude.HasValue
+            ? new LocationResult(latitude.Value, longitude.Value, Address)
+            : null;
+        var location = await _mapProvider.PickAsync(initialLocation);
+        if (location is null)
+        {
+            return;
+        }
+
+        await MainThread.InvokeOnMainThreadAsync(() => ApplyLocation(location));
+    }
+
+    public void ApplyLocation(LocationResult location)
+    {
+        Latitude = location.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Longitude = location.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Address = NormalizeAddress(location.Address);
+    }
+
+    private static string NormalizeAddress(string? address)
+    {
+        return string.IsNullOrWhiteSpace(address)
+            ? string.Empty
+            : string.Join(", ", address.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
 
     [RelayCommand]

@@ -6,11 +6,11 @@
 
         private readonly AppShell _appShell;
 
-        public App(AppShell appShell)
+        public App(IServiceProvider services)
         {
             InitializeComponent();
-            Services = appShell.Services;
-            _appShell = appShell;
+            Services = services;
+            _appShell = services.GetRequiredService<AppShell>();
         }
 
         protected override Window CreateWindow(IActivationState? activationState)

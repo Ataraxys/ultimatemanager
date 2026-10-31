@@ -42,31 +42,24 @@
                    ReturnType="Next" />
 
             <Label Text="Adresse" Style="{StaticResource SectionTitle}" />
-            <Entry Text="{Binding Address}"
+             <Entry Text="{Binding Address, Mode=TwoWay}"
                    Placeholder="Adresse"
+                    IsTextPredictionEnabled="False"
+                    ClearButtonVisibility="WhileEditing"
                    ReturnType="Next" />
-            <Grid ColumnDefinitions="*,2*" ColumnSpacing="12">
-                <Entry Text="{Binding PostalCode}"
-                       Placeholder="Code postal"
-                       Keyboard="Numeric"
-                       ReturnType="Next" />
-                <Entry Grid.Column="1"
-                       Text="{Binding City}"
-                       Placeholder="Ville"
-                       ReturnType="Next" />
-            </Grid>
-            <Entry Text="{Binding Country}"
-                   Placeholder="Pays"
-                   ReturnType="Next" />
-
             <Label Text="Localisation GPS" Style="{StaticResource SectionTitle}" />
+            <Button Text="Choisir sur la carte"
+                    Command="{Binding PickLocationCommand}"
+                    HorizontalOptions="Start" />
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                <Entry Text="{Binding Latitude}"
+                <Entry ClassId="Latitude"
+                       Text="{Binding Latitude, Mode=TwoWay}"
                        Placeholder="Latitude"
                        Keyboard="Numeric"
                        ReturnType="Next" />
-                <Entry Grid.Column="1"
-                       Text="{Binding Longitude}"
+                <Entry ClassId="Longitude"
+                       Grid.Column="1"
+                       Text="{Binding Longitude, Mode=TwoWay}"
                        Placeholder="Longitude"
                        Keyboard="Numeric"
                        ReturnType="Next" />

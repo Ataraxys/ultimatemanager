@@ -17,6 +17,8 @@ public partial class ClientsViewModel(IClientService clientService) : Observable
 
     public event EventHandler<Client>? ClientSelected;
 
+    public event EventHandler? ImportRequested;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasNoClients))]
     private bool isLoading;
@@ -29,6 +31,13 @@ public partial class ClientsViewModel(IClientService clientService) : Observable
     partial void OnSearchTextChanged(string value)
     {
         _ = SearchAsync();
+    }
+
+    [RelayCommand]
+    private Task ImportAsync()
+    {
+        ImportRequested?.Invoke(this, EventArgs.Empty);
+        return Task.CompletedTask;
     }
 
     [RelayCommand]

@@ -12,6 +12,7 @@ namespace UltimateManager
             var builder = MauiApp.CreateBuilder();
             builder
                 .UseMauiApp<App>()
+                .UseMauiMaps()
                 .ConfigureFonts(fonts =>
                 {
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
@@ -19,6 +20,10 @@ namespace UltimateManager
                 });
 
             builder.Services.AddSingleton<IClientService, SqliteClientService>();
+            builder.Services.AddSingleton<HttpClient>();
+            builder.Services.AddSingleton<IMapProvider, GoogleMapProvider>();
+            builder.Services.AddSingleton<IPlaceSearchProvider, GooglePlaceSearchProvider>();
+            builder.Services.AddSingleton<IContactImporter, ContactImporter>();
             builder.Services.AddSingleton<AppShell>();
 
             builder.Services.AddTransient<ClientsPage>();

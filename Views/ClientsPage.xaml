@@ -6,6 +6,9 @@
              x:Class="UltimateManager.Views.ClientsPage"
              x:DataType="viewModels:ClientsViewModel"
              Title="Clients">
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="Importer" Command="{Binding ImportCommand}" />
+    </ContentPage.ToolbarItems>
     <Grid Padding="20,16"
           RowDefinitions="Auto,Auto,*"
           RowSpacing="16">

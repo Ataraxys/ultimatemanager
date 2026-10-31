@@ -83,7 +83,7 @@
                     <Label Text="Localisation GPS" Style="{StaticResource SectionTitle}" />
                     <Label Text="{Binding CurrentClient.Latitude, StringFormat='Latitude : {0}'}" />
                     <Label Text="{Binding CurrentClient.Longitude, StringFormat='Longitude : {0}'}" />
-                    <Button Text="Ouvrir dans Google Maps"
+                    <Button Text="Open in map"
                             Command="{Binding OpenMapCommand}"
                             HorizontalOptions="Start" />
                 </VerticalStackLayout>
