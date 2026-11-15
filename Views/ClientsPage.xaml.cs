@@ -1,3 +1,4 @@
+using System.Text.Json;
 using UltimateManager.ViewModels;
 using UltimateManager.Models;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,15 +22,38 @@ public partial class ClientsPage : ContentPage
 
     private async void OnImportRequested(object? sender, EventArgs e)
     {
-        var importer = App.Services.GetRequiredService<IContactImporter>();
+        await Shell.Current.GoToAsync("ContactImportPage");
+    }
+
+    private async void OnShareBackupClicked(object? sender, EventArgs e)
+    {
         var clientService = App.Services.GetRequiredService<IClientService>();
-        var importedClients = await importer.ImportAsync();
-        if (importedClients.Count == 0)
+        var backupService = App.Services.GetRequiredService<IClientBackupService>();
+        await backupService.RegenerateAsync(await clientService.GetAllAsync());
+        await backupService.ShareAsync();
+    }
+
+    private async void OnImportBackupClicked(object? sender, EventArgs e)
+    {
+        var backupService = App.Services.GetRequiredService<IClientBackupService>();
+        IReadOnlyList<Client> importedClients;
+        try
         {
-            await DisplayAlertAsync("Importation", "Aucun contact à importer ou permission refusée.", "OK");
+            importedClients = await backupService.PickAndReadAsync();
+        }
+        catch (JsonException)
+        {
+            await DisplayAlertAsync("Importation", "Le fichier sélectionné n’est pas une sauvegarde valide.", "OK");
             return;
         }
 
+        if (importedClients.Count == 0)
+        {
+            await DisplayAlertAsync("Importation", "Aucun client trouvé dans ce fichier.", "OK");
+            return;
+        }
+
+        var clientService = App.Services.GetRequiredService<IClientService>();
         var existingClients = await clientService.GetAllAsync();
         var importedCount = 0;
         foreach (var importedClient in importedClients)
@@ -37,53 +61,48 @@ public partial class ClientsPage : ContentPage
             var duplicate = FindDuplicate(existingClients, importedClient);
             if (duplicate is null)
             {
+                importedClient.Id = importedClient.Id == Guid.Empty ? Guid.NewGuid() : importedClient.Id;
                 await clientService.CreateAsync(importedClient);
+                existingClients = existingClients.Append(importedClient).ToList();
                 importedCount++;
                 continue;
             }
 
-            var update = await DisplayAlertAsync(
-                "Contact déjà présent",
-                $"{importedClient.FullName} existe déjà. Mettre à jour ses coordonnées ?",
-                "Mettre à jour",
-                "Ignorer");
-            if (!update)
+            if (!await DisplayAlertAsync("Client déjà présent", $"{importedClient.FullName} existe déjà. Remplacer ses informations ?", "Remplacer", "Ignorer"))
             {
                 continue;
             }
 
-            duplicate.FirstName = importedClient.FirstName;
-            duplicate.LastName = importedClient.LastName;
-            if (!string.IsNullOrWhiteSpace(importedClient.PhoneNumber))
-            {
-                duplicate.PhoneNumber = importedClient.PhoneNumber;
-            }
-
-            if (!string.IsNullOrWhiteSpace(importedClient.Email))
-            {
-                duplicate.Email = importedClient.Email;
-            }
-
-            duplicate.UpdatedAt = DateTime.UtcNow;
-            await clientService.UpdateAsync(duplicate);
+            importedClient.Id = duplicate.Id;
+            importedClient.UpdatedAt = DateTime.UtcNow;
+            await clientService.UpdateAsync(importedClient);
             importedCount++;
         }
 
         await _viewModel.LoadCommand.ExecuteAsync(null);
-        await DisplayAlertAsync("Importation terminée", $"{importedCount} contact(s) traité(s).", "OK");
+        await DisplayAlertAsync("Importation terminée", $"{importedCount} client(s) traité(s).", "OK");
     }
 
     private static Client? FindDuplicate(IEnumerable<Client> clients, Client importedClient)
     {
-        if (string.IsNullOrWhiteSpace(importedClient.PhoneNumber))
+        if (importedClient.Id != Guid.Empty)
         {
-            return clients.FirstOrDefault(client =>
-                !string.IsNullOrWhiteSpace(importedClient.Email) &&
-                string.Equals(client.Email, importedClient.Email, StringComparison.OrdinalIgnoreCase));
+            var byId = clients.FirstOrDefault(client => client.Id == importedClient.Id);
+            if (byId is not null)
+            {
+                return byId;
+            }
         }
 
-        var normalizedPhone = NormalizePhone(importedClient.PhoneNumber);
-        return clients.FirstOrDefault(client => NormalizePhone(client.PhoneNumber) == normalizedPhone);
+        if (!string.IsNullOrWhiteSpace(importedClient.PhoneNumber))
+        {
+            var normalizedPhone = NormalizePhone(importedClient.PhoneNumber);
+            return clients.FirstOrDefault(client => NormalizePhone(client.PhoneNumber) == normalizedPhone);
+        }
+
+        return clients.FirstOrDefault(client =>
+            !string.IsNullOrWhiteSpace(importedClient.Email) &&
+            string.Equals(client.Email, importedClient.Email, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string NormalizePhone(string phoneNumber) =>

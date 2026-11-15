@@ -7,9 +7,11 @@ public sealed class SqliteClientService : IClientService
 {
     private readonly SQLiteAsyncConnection _connection;
     private readonly Task _initializationTask;
+    private readonly IClientBackupService _backupService;
 
-    public SqliteClientService()
+    public SqliteClientService(IClientBackupService backupService)
     {
+        _backupService = backupService;
         var databasePath = Path.Combine(FileSystem.AppDataDirectory, "ultimate-manager.db3");
         _connection = new SQLiteAsyncConnection(databasePath);
         _initializationTask = _connection.CreateTableAsync<Client>();
@@ -34,6 +36,7 @@ public sealed class SqliteClientService : IClientService
     {
         await EnsureInitializedAsync(cancellationToken);
         await _connection.InsertAsync(client);
+        await RegenerateBackupAsync(cancellationToken);
         return client;
     }
 
@@ -41,6 +44,7 @@ public sealed class SqliteClientService : IClientService
     {
         await EnsureInitializedAsync(cancellationToken);
         await _connection.UpdateAsync(client);
+        await RegenerateBackupAsync(cancellationToken);
         return client;
     }
 
@@ -48,6 +52,7 @@ public sealed class SqliteClientService : IClientService
     {
         await EnsureInitializedAsync(cancellationToken);
         await _connection.DeleteAsync<Client>(id);
+        await RegenerateBackupAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<Client>> SearchAsync(string searchText, CancellationToken cancellationToken = default)
@@ -66,5 +71,11 @@ public sealed class SqliteClientService : IClientService
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
         await _initializationTask.WaitAsync(cancellationToken);
+    }
+
+    private async Task RegenerateBackupAsync(CancellationToken cancellationToken)
+    {
+        var clients = await _connection.Table<Client>().ToListAsync();
+        await _backupService.RegenerateAsync(clients, cancellationToken);
     }
 }

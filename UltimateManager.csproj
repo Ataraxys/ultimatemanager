@@ -83,6 +83,12 @@
 	  <MauiXaml Update="Views\ClientEditPage.xaml">
 	    <Generator>MSBuild:Compile</Generator>
 	  </MauiXaml>
+	<MauiXaml Update="Views\ContactImportPage.xaml">
+	<Generator>MSBuild:Compile</Generator>
+  </MauiXaml>
+	  <MauiXaml Update="Views\ContactImportPage.xaml">
+	    <Generator>MSBuild:Compile</Generator>
+	  </MauiXaml>
 	</ItemGroup>
 
 </Project>

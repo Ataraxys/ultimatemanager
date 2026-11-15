@@ -31,8 +31,17 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
 
     private async void OnSaveClicked(object? sender, EventArgs e)
     {
+        var isNewClient = !_viewModel.IsEditing;
         if (await _viewModel.SaveAsync())
         {
+            if (isNewClient)
+            {
+                await DisplayAlertAsync(
+                    "Sauvegarde recommandée",
+                    "Une sauvegarde de vos clients a été créée. Utilisez l’action « Sauvegarder » et placez ce fichier sur un drive si possible pour ne pas le perdre.",
+                    "Compris");
+            }
+
             await Shell.Current.GoToAsync("..");
         }
     }

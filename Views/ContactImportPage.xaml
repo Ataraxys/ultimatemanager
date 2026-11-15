@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="UltimateManager.Views.ContactImportPage"
+             Title="Importer des contacts">
+    <Grid Padding="20,16,20,28" RowDefinitions="Auto,*,Auto" RowSpacing="16">
+        <VerticalStackLayout Spacing="4">
+            <Label Text="Choisir les contacts"
+                   FontFamily="OpenSansSemibold"
+                   FontSize="24" />
+            <Label Text="Sélectionnez les contacts à ajouter à votre répertoire clients."
+                   FontSize="14"
+                   TextColor="{StaticResource Gray500}" />
+            <Button Text="Tout sélectionner / désélectionner"
+                    Clicked="OnToggleAllClicked"
+                    HorizontalOptions="Start" />
+        </VerticalStackLayout>
+
+        <CollectionView x:Name="ContactsView" Grid.Row="1" ItemsSource="{Binding Contacts}">
+            <CollectionView.EmptyView>
+                <Label Text="Aucun contact importable trouvé."
+                       HorizontalOptions="Center"
+                       VerticalOptions="Center"
+                       TextColor="{StaticResource Gray500}" />
+            </CollectionView.EmptyView>
+            <CollectionView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Padding="0,8" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                  VerticalOptions="Center" />
+                        <VerticalStackLayout Grid.Column="1" Spacing="2">
+                            <Label Text="{Binding Client.FullName}"
+                                   FontFamily="OpenSansSemibold"
+                                   FontSize="16" />
+                            <Label Text="{Binding Client.PhoneNumber}"
+                                   TextColor="{StaticResource Gray500}" />
+                        </VerticalStackLayout>
+                        <Label Grid.Column="2"
+                               Text="{Binding Client.Email}"
+                               TextColor="{StaticResource Gray500}"
+                               VerticalOptions="Center" />
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <Button Grid.Row="2"
+                Text="Importer la sélection"
+                Clicked="OnImportClicked"
+                IsEnabled="{Binding IsNotBusy}" />
+    </Grid>
+</ContentPage>

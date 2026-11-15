@@ -8,6 +8,8 @@
              Title="Clients">
     <ContentPage.ToolbarItems>
         <ToolbarItem Text="Importer" Command="{Binding ImportCommand}" />
+        <ToolbarItem Text="Importer une sauvegarde" Clicked="OnImportBackupClicked" />
+        <ToolbarItem Text="Sauvegarder" Clicked="OnShareBackupClicked" />
     </ContentPage.ToolbarItems>
     <Grid Padding="20,16"
           RowDefinitions="Auto,Auto,*"

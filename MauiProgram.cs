@@ -20,6 +20,7 @@ namespace UltimateManager
                 });
 
             builder.Services.AddSingleton<IClientService, SqliteClientService>();
+            builder.Services.AddSingleton<IClientBackupService, ClientBackupService>();
             builder.Services.AddSingleton<HttpClient>();
             builder.Services.AddSingleton<IMapProvider, GoogleMapProvider>();
             builder.Services.AddSingleton<IPlaceSearchProvider, GooglePlaceSearchProvider>();
@@ -29,6 +30,7 @@ namespace UltimateManager
             builder.Services.AddTransient<ClientsPage>();
             builder.Services.AddTransient<ClientDetailsPage>();
             builder.Services.AddTransient<ClientEditPage>();
+            builder.Services.AddTransient<ContactImportPage>();
 
             builder.Services.AddTransient<ClientsViewModel>();
             builder.Services.AddTransient<ClientDetailsViewModel>();

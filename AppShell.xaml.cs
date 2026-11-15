@@ -14,6 +14,7 @@ namespace UltimateManager
             Services = services;
             Routing.RegisterRoute("ClientDetailsPage", typeof(ClientDetailsPage));
             Routing.RegisterRoute("ClientEditPage", typeof(ClientEditPage));
+            Routing.RegisterRoute("ContactImportPage", typeof(ContactImportPage));
             Items.Add(new ShellContent
             {
                 Title = "Clients",
