@@ -80,15 +80,8 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <MauiXaml Update="Views\ClientEditPage.xaml">
-	    <Generator>MSBuild:Compile</Generator>
-	  </MauiXaml>
-	<MauiXaml Update="Views\ContactImportPage.xaml">
-	<Generator>MSBuild:Compile</Generator>
-  </MauiXaml>
-	  <MauiXaml Update="Views\ContactImportPage.xaml">
-	    <Generator>MSBuild:Compile</Generator>
-	  </MauiXaml>
+	  <MauiXaml Update="Views\ClientEditPage.xaml" Inflator="SourceGen" />
+	  <MauiXaml Update="Views\ContactImportPage.xaml" Inflator="SourceGen" />
 	</ItemGroup>
 
 </Project>

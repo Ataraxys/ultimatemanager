@@ -12,9 +12,9 @@ public partial class ContactImportPage : ContentPage
 
     public ObservableCollection<ImportContactItem> Contacts { get; } = [];
 
-    public bool IsBusy { get; private set; }
+    public bool IsImporting { get; private set; }
 
-    public bool IsNotBusy => !IsBusy;
+    public bool IsNotBusy => !IsImporting;
 
     public ContactImportPage()
     {
@@ -34,7 +34,7 @@ public partial class ContactImportPage : ContentPage
 
         try
         {
-            IsBusy = true;
+            IsImporting = true;
             OnPropertyChanged(nameof(IsNotBusy));
             var contacts = await _importer.ImportAsync();
             foreach (var contact in contacts)
@@ -44,7 +44,7 @@ public partial class ContactImportPage : ContentPage
         }
         finally
         {
-            IsBusy = false;
+            IsImporting = false;
             OnPropertyChanged(nameof(IsNotBusy));
         }
     }
@@ -62,7 +62,7 @@ public partial class ContactImportPage : ContentPage
 
     private async void OnImportClicked(object? sender, EventArgs e)
     {
-        if (IsBusy)
+        if (IsImporting)
         {
             return;
         }
@@ -76,7 +76,7 @@ public partial class ContactImportPage : ContentPage
 
         try
         {
-            IsBusy = true;
+            IsImporting = true;
             OnPropertyChanged(nameof(IsNotBusy));
             var existingClients = await _clientService.GetAllAsync();
             var importedCount = 0;
@@ -123,7 +123,7 @@ public partial class ContactImportPage : ContentPage
         }
         finally
         {
-            IsBusy = false;
+            IsImporting = false;
             OnPropertyChanged(nameof(IsNotBusy));
         }
     }
