@@ -1,5 +1,6 @@
 using SQLite;
 using UltimateManager.Models;
+using UltimateManager.Models.DynamicForms;
 
 namespace UltimateManager.Services;
 
@@ -14,7 +15,7 @@ public sealed class SqliteClientService : IClientService
         _backupService = backupService;
         var databasePath = Path.Combine(FileSystem.AppDataDirectory, "ultimate-manager.db3");
         _connection = new SQLiteAsyncConnection(databasePath);
-        _initializationTask = _connection.CreateTableAsync<Client>();
+        _initializationTask = InitializeTablesAsync();
     }
 
     public async Task<IReadOnlyList<Client>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -71,6 +72,18 @@ public sealed class SqliteClientService : IClientService
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
         await _initializationTask.WaitAsync(cancellationToken);
+    }
+
+    private async Task InitializeTablesAsync()
+    {
+        await _connection.CreateTableAsync<Client>();
+        await _connection.CreateTableAsync<Workspace>();
+        await _connection.CreateTableAsync<EntityTemplate>();
+        await _connection.CreateTableAsync<BlockDefinition>();
+        await _connection.CreateTableAsync<FieldDefinition>();
+        await _connection.CreateTableAsync<EntityRecord>();
+        await _connection.CreateTableAsync<BlockInstance>();
+        await _connection.CreateTableAsync<FieldValue>();
     }
 
     private async Task RegenerateBackupAsync(CancellationToken cancellationToken)

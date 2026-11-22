@@ -1,19 +1,45 @@
 using System.ComponentModel.DataAnnotations;
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UltimateManager.Models;
+using UltimateManager.Models.DynamicForms;
 using UltimateManager.Services;
 
 namespace UltimateManager.ViewModels;
 
-public partial class ClientEditViewModel(IClientService clientService, IMapProvider mapProvider) : ObservableValidator
+public partial class ClientEditViewModel(
+    IClientService clientService,
+    IMapProvider mapProvider,
+    IDynamicFormService dynamicFormService) : ObservableValidator
 {
     private readonly IClientService _clientService = clientService;
     private readonly IMapProvider _mapProvider = mapProvider;
+    private readonly IDynamicFormService _dynamicFormService = dynamicFormService;
     private Guid _clientId;
     private DateTime _createdAt;
 
     public bool IsEditing => _clientId != Guid.Empty;
+
+    public Guid ClientId => _clientId;
+
+    public ObservableCollection<EntityTemplate> Templates { get; } = [];
+
+    private EntityTemplate? _selectedTemplate;
+
+    public EntityTemplate? SelectedTemplate
+    {
+        get => _selectedTemplate;
+        set
+        {
+            if (SetProperty(ref _selectedTemplate, value))
+            {
+                OnPropertyChanged(nameof(SelectedTemplateId));
+            }
+        }
+    }
+
+    public Guid SelectedTemplateId => SelectedTemplate?.Id ?? Guid.Empty;
 
     public string? FirstNameError => GetErrors(nameof(FirstName)).FirstOrDefault()?.ErrorMessage;
 
@@ -77,8 +103,38 @@ public partial class ClientEditViewModel(IClientService clientService, IMapProvi
         Comment = client?.Comment ?? string.Empty;
         ClearErrors();
         OnPropertyChanged(nameof(IsEditing));
+        OnPropertyChanged(nameof(ClientId));
         OnPropertyChanged(nameof(FirstNameError));
         OnPropertyChanged(nameof(LastNameError));
+    }
+
+    public async Task LoadTemplateSelectionAsync(Guid clientId, CancellationToken cancellationToken = default)
+    {
+        var templates = await _dynamicFormService.GetTemplatesAsync(cancellationToken);
+        if (templates.Count == 0)
+        {
+            await _dynamicFormService.EnsureDefaultClientTemplateAsync(cancellationToken);
+            templates = await _dynamicFormService.GetTemplatesAsync(cancellationToken);
+        }
+
+        Templates.Clear();
+        foreach (var template in templates)
+        {
+            Templates.Add(template.Template);
+        }
+
+        EntityTemplate? selected = null;
+        if (clientId != Guid.Empty)
+        {
+            var record = await _dynamicFormService.GetRecordForExternalEntityAsync(clientId, cancellationToken);
+            selected = record is null
+                ? null
+                : Templates.FirstOrDefault(template => template.Id == record.Record.TemplateId);
+        }
+
+        var defaultTemplate = (await _dynamicFormService.GetDefaultClientTemplateAsync(cancellationToken)).Template;
+        SelectedTemplate = selected ?? Templates.FirstOrDefault(template => template.Id == defaultTemplate.Id) ?? defaultTemplate;
+        OnPropertyChanged(nameof(SelectedTemplateId));
     }
 
     [RelayCommand]

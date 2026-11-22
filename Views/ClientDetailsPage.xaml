@@ -23,6 +23,38 @@
                        TextColor="{StaticResource Gray500}" />
             </VerticalStackLayout>
 
+            <CollectionView ItemsSource="{Binding DynamicBlocks}"
+                            SelectionMode="None">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="viewModels:DynamicBlockDisplay">
+                        <Border Margin="0,0,0,12"
+                                Padding="16"
+                                Stroke="{StaticResource Gray200}"
+                                StrokeShape="RoundRectangle 16">
+                            <VerticalStackLayout Spacing="10">
+                                <Label Text="{Binding Name}"
+                                       Style="{StaticResource SectionTitle}" />
+                                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Fields}"
+                                                     Spacing="8">
+                                    <BindableLayout.ItemTemplate>
+                                        <DataTemplate x:DataType="viewModels:DynamicFieldDisplay">
+                                            <Grid ColumnDefinitions="Auto,*"
+                                                  ColumnSpacing="12">
+                                                <Label Text="{Binding Label}"
+                                                       TextColor="{StaticResource Gray500}" />
+                                                <Label Grid.Column="1"
+                                                       Text="{Binding Value}"
+                                                       IsVisible="{Binding HasValue}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </VerticalStackLayout>
+                            </VerticalStackLayout>
+                        </Border>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+
             <Border Padding="16"
                     Stroke="{StaticResource Gray200}"
                     StrokeShape="RoundRectangle 16">
@@ -108,6 +140,16 @@
                         Clicked="OnDeleteClicked"
                         BackgroundColor="#C62828"
                         HorizontalOptions="Fill" />
+            </Grid>
+            <Button Text="Modifier la fiche personnalisée"
+                    Clicked="OnDynamicEditClicked"
+                    HorizontalOptions="Fill" />
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                <Button Text="Modifier le template"
+                        Clicked="OnEditTemplateClicked" />
+                <Button Grid.Column="1"
+                        Text="Nouveau template"
+                        Clicked="OnCloneTemplateClicked" />
             </Grid>
         </VerticalStackLayout>
     </ScrollView>

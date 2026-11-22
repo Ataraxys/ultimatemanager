@@ -16,6 +16,15 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
         _viewModel.Load(null);
     }
 
+    protected override async void OnAppearing()
+    {
+        base.OnAppearing();
+        if (!_viewModel.IsEditing)
+        {
+            await _viewModel.LoadTemplateSelectionAsync(Guid.Empty);
+        }
+    }
+
     public async void ApplyQueryAttributes(IDictionary<string, object> query)
     {
         if (!query.TryGetValue("id", out var value) || !Guid.TryParse(value?.ToString(), out var id))
@@ -27,6 +36,7 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
         var clientService = App.Services.GetRequiredService<Services.IClientService>();
         var client = await clientService.GetByIdAsync(id);
         _viewModel.Load(client);
+        await _viewModel.LoadTemplateSelectionAsync(id);
     }
 
     private async void OnSaveClicked(object? sender, EventArgs e)
@@ -34,6 +44,15 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
         var isNewClient = !_viewModel.IsEditing;
         if (await _viewModel.SaveAsync())
         {
+            var dynamicFormService = App.Services.GetRequiredService<Services.IDynamicFormService>();
+            var templateId = _viewModel.SelectedTemplateId;
+            if (templateId == Guid.Empty)
+            {
+                templateId = (await dynamicFormService.GetDefaultClientTemplateAsync()).Template.Id;
+            }
+            await dynamicFormService.GetOrCreateRecordAsync(_viewModel.ClientId, templateId);
+            await App.Services.GetRequiredService<Services.IAutomaticBackupService>().SaveAfterChangeAsync();
+
             if (isNewClient)
             {
                 await DisplayAlertAsync(
@@ -42,7 +61,9 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
                     "Compris");
             }
 
-            await Shell.Current.GoToAsync("..");
+            await Shell.Current.GoToAsync(isNewClient
+                ? $"../ClientDetailsPage?id={_viewModel.ClientId}"
+                : "..");
         }
     }
 

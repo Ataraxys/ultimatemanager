@@ -16,6 +16,49 @@ public partial class ClientDetailsPage : ContentPage, IQueryAttributable
         BindingContext = _viewModel;
     }
 
+    private async void OnDynamicEditClicked(object? sender, EventArgs e)
+    {
+        await Shell.Current.GoToAsync($"ClientDynamicRecordPage?id={_clientId}");
+    }
+
+    private async void OnEditTemplateClicked(object? sender, EventArgs e)
+    {
+        var service = App.Services.GetRequiredService<Services.IDynamicFormService>();
+        var record = await service.GetRecordForExternalEntityAsync(_clientId);
+        if (record is null)
+        {
+            var template = await service.GetDefaultClientTemplateAsync();
+            record = await service.GetOrCreateRecordAsync(_clientId, template.Template.Id);
+        }
+
+        await Shell.Current.GoToAsync($"TemplateEditorPage?id={record.Record.TemplateId}");
+    }
+
+    private async void OnCloneTemplateClicked(object? sender, EventArgs e)
+    {
+        var service = App.Services.GetRequiredService<Services.IDynamicFormService>();
+        var record = await service.GetRecordForExternalEntityAsync(_clientId);
+        if (record is null)
+        {
+            var template = await service.GetDefaultClientTemplateAsync();
+            record = await service.GetOrCreateRecordAsync(_clientId, template.Template.Id);
+        }
+
+        var name = await DisplayPromptAsync(
+            "Nouveau template",
+            "Nom du template",
+            "Créer",
+            "Annuler",
+            $"Copie de {record.Record.TemplateId}");
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        var clone = await service.CloneTemplateAsync(record.Record.TemplateId, name);
+        await Shell.Current.GoToAsync($"TemplateEditorPage?id={clone.Template.Id}");
+    }
+
     public void ApplyQueryAttributes(IDictionary<string, object> query)
     {
         if (query.TryGetValue("id", out var value) && Guid.TryParse(value?.ToString(), out var id))

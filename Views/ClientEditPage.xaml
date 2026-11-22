@@ -3,11 +3,17 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:viewModels="clr-namespace:UltimateManager.ViewModels"
              x:Class="UltimateManager.Views.ClientEditPage"
+             xmlns:models="clr-namespace:UltimateManager.Models.DynamicForms"
              x:DataType="viewModels:ClientEditViewModel"
              Title="Client">
     <ScrollView>
         <VerticalStackLayout Padding="20,16,20,28" Spacing="16">
             <Label Text="Informations personnelles" Style="{StaticResource SectionTitle}" />
+            <Label Text="Modèle de fiche" Style="{StaticResource SectionTitle}" />
+            <Picker ItemsSource="{Binding Templates}"
+                    ItemDisplayBinding="{Binding Name}"
+                    SelectedItem="{Binding SelectedTemplate, Mode=TwoWay}"
+                    Title="Choisir un modèle" />
 
             <VerticalStackLayout Spacing="4">
                 <Label Text="Prénom *" />
