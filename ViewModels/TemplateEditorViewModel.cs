@@ -18,6 +18,11 @@ public sealed class TemplateEditorViewModel(
 
     public string TemplateName { get; private set; } = string.Empty;
 
+    public Task<TemplateDefinition> SaveAsTemplateAsync(
+        string name,
+        CancellationToken cancellationToken = default) =>
+        _formService.CloneTemplateAsync(TemplateId, name, cancellationToken);
+
     public async Task LoadAsync(Guid templateId, CancellationToken cancellationToken = default)
     {
         var template = await _formService.GetTemplateAsync(templateId, cancellationToken)
@@ -44,6 +49,13 @@ public sealed class TemplateEditorViewModel(
         var field = await _formService.AddFieldAsync(block.Id, string.IsNullOrWhiteSpace(label) ? GetDefaultLabel(fieldType) : label, fieldType, cancellationToken);
         block.Fields.Add(new TemplateFieldEditorItem(field));
         RefreshFieldOrders(block);
+        await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
+    }
+
+    public async Task ChangeFieldTypeAsync(TemplateFieldEditorItem field, FieldType fieldType, CancellationToken cancellationToken = default)
+    {
+        field.FieldType = fieldType;
+        await _formService.UpdateFieldAsync(field.Model, cancellationToken);
         await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
     }
 

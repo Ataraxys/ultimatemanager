@@ -10,19 +10,62 @@ namespace UltimateManager.ViewModels;
 public partial class ClientDetailsViewModel(
     IClientService clientService,
     IDynamicFormService dynamicFormService,
-    DynamicFieldValueSerializer serializer) : ObservableObject
+    ClientDynamicRecordViewModel dynamicRecordViewModel) : ObservableObject
 {
     private readonly IClientService _clientService = clientService;
     private readonly IDynamicFormService _dynamicFormService = dynamicFormService;
-    private readonly DynamicFieldValueSerializer _serializer = serializer;
+    private readonly ClientDynamicRecordViewModel _dynamicRecordViewModel = dynamicRecordViewModel;
 
-    public ObservableCollection<DynamicBlockDisplay> DynamicBlocks { get; } = [];
+    public ObservableCollection<DynamicRecordBlockItem> EditableDynamicBlocks => _dynamicRecordViewModel.Blocks;
+
+    public string TemplateName => _dynamicRecordViewModel.TemplateName;
+
+    public Guid TemplateId => _dynamicRecordViewModel.TemplateId;
 
     [ObservableProperty]
     private Client? currentClient;
 
     [ObservableProperty]
     private bool isLoading;
+
+    [ObservableProperty]
+    private bool isEditing;
+
+    [ObservableProperty]
+    private bool isSaving;
+
+    [ObservableProperty]
+    private string firstName = string.Empty;
+
+    [ObservableProperty]
+    private string lastName = string.Empty;
+
+    [ObservableProperty]
+    private string phoneNumber = string.Empty;
+
+    [ObservableProperty]
+    private string email = string.Empty;
+
+    [ObservableProperty]
+    private string address = string.Empty;
+
+    [ObservableProperty]
+    private string postalCode = string.Empty;
+
+    [ObservableProperty]
+    private string city = string.Empty;
+
+    [ObservableProperty]
+    private string country = string.Empty;
+
+    [ObservableProperty]
+    private string comment = string.Empty;
+
+    [ObservableProperty]
+    private string latitude = string.Empty;
+
+    [ObservableProperty]
+    private string longitude = string.Empty;
 
     public bool HasLocation => CurrentClient?.Latitude is not null && CurrentClient.Longitude is not null;
 
@@ -49,13 +92,172 @@ public partial class ClientDetailsViewModel(
         {
             IsLoading = true;
             CurrentClient = await _clientService.GetByIdAsync(id);
-            await LoadDynamicBlocksAsync();
+            LoadEditableClientFields();
+            await EnsureDynamicRecordLoadedAsync();
             NotifyComputedProperties();
         }
         finally
         {
             IsLoading = false;
         }
+    }
+
+    public async Task BeginEditingAsync()
+    {
+        if (CurrentClient is null || IsEditing)
+        {
+            return;
+        }
+
+        _dynamicRecordViewModel.BeginEditing();
+        IsEditing = true;
+    }
+
+    public async Task BeginContentEditingAsync()
+    {
+        await BeginEditingAsync();
+    }
+
+    public async Task<Guid> GetTemplateIdAsync(CancellationToken cancellationToken = default)
+    {
+        if (TemplateId == Guid.Empty)
+        {
+            await EnsureDynamicRecordLoadedAsync(cancellationToken);
+        }
+
+        return TemplateId;
+    }
+
+    [RelayCommand]
+    private Task BeginContentEditAsync() => BeginContentEditingAsync();
+
+    public async Task<bool> SaveEditingAsync(CancellationToken cancellationToken = default)
+    {
+        if (CurrentClient is null || !IsEditing || IsSaving)
+        {
+            return false;
+        }
+
+        try
+        {
+            IsSaving = true;
+            ApplyEditableClientFields(out var clientChanged);
+            if (clientChanged)
+            {
+                await _clientService.UpdateAsync(CurrentClient, cancellationToken);
+            }
+
+            if (!await _dynamicRecordViewModel.SaveAsync(cancellationToken))
+            {
+                return false;
+            }
+
+            IsEditing = false;
+            NotifyComputedProperties();
+            return true;
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    public async Task CancelEditingAsync()
+    {
+        if (CurrentClient is null)
+        {
+            return;
+        }
+
+        IsEditing = false;
+        await LoadAsync(CurrentClient.Id);
+    }
+
+    public Task CallDynamicFieldAsync(DynamicRecordFieldItem field)
+    {
+        if (!field.IsPhone || string.IsNullOrWhiteSpace(field.PhoneNumber))
+        {
+            return Task.CompletedTask;
+        }
+
+        var number = $"{field.CountryCode}{field.PhoneNumber}".Replace(" ", string.Empty);
+        return Launcher.Default.OpenAsync($"tel:{number}");
+    }
+
+    public Task PickLocationAsync(DynamicRecordFieldItem field) =>
+        _dynamicRecordViewModel.PickLocationAsync(field);
+
+    public Task OpenInMapAsync(DynamicRecordFieldItem field) =>
+        _dynamicRecordViewModel.OpenInMapAsync(field);
+
+    private void LoadEditableClientFields()
+    {
+        FirstName = CurrentClient?.FirstName ?? string.Empty;
+        LastName = CurrentClient?.LastName ?? string.Empty;
+        PhoneNumber = CurrentClient?.PhoneNumber ?? string.Empty;
+        Email = CurrentClient?.Email ?? string.Empty;
+        Address = CurrentClient?.Address ?? string.Empty;
+        PostalCode = CurrentClient?.PostalCode ?? string.Empty;
+        City = CurrentClient?.City ?? string.Empty;
+        Country = CurrentClient?.Country ?? string.Empty;
+        Comment = CurrentClient?.Comment ?? string.Empty;
+        Latitude = CurrentClient?.Latitude?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+        Longitude = CurrentClient?.Longitude?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+    }
+
+    private void ApplyEditableClientFields(out bool changed)
+    {
+        changed = false;
+        if (CurrentClient is null)
+        {
+            return;
+        }
+
+        var firstName = FirstName.Trim();
+        var lastName = LastName.Trim();
+        var phoneNumber = PhoneNumber.Trim();
+        var email = string.IsNullOrWhiteSpace(Email) ? null : Email.Trim();
+        var address = Address.Trim();
+        var postalCode = PostalCode.Trim();
+        var city = City.Trim();
+        var country = Country.Trim();
+        var comment = Comment.Trim();
+        var latitude = double.TryParse(Latitude.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedLatitude)
+            ? (double?)parsedLatitude
+            : null;
+        var longitudeInput = Longitude.Trim();
+        var longitude = double.TryParse(longitudeInput, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsedLongitude)
+            ? (double?)parsedLongitude
+            : null;
+
+        changed = CurrentClient.FirstName != firstName ||
+                  CurrentClient.LastName != lastName ||
+                  CurrentClient.PhoneNumber != phoneNumber ||
+                  CurrentClient.Email != email ||
+                  CurrentClient.Address != address ||
+                  CurrentClient.PostalCode != postalCode ||
+                  CurrentClient.City != city ||
+                  CurrentClient.Country != country ||
+                  CurrentClient.Comment != comment ||
+                  CurrentClient.Latitude != latitude ||
+                  CurrentClient.Longitude != longitude;
+
+        if (!changed)
+        {
+            return;
+        }
+
+        CurrentClient.FirstName = firstName;
+        CurrentClient.LastName = lastName;
+        CurrentClient.PhoneNumber = phoneNumber;
+        CurrentClient.Email = email;
+        CurrentClient.Address = address;
+        CurrentClient.PostalCode = postalCode;
+        CurrentClient.City = city;
+        CurrentClient.Country = country;
+        CurrentClient.Comment = comment;
+        CurrentClient.Latitude = latitude;
+        CurrentClient.Longitude = longitude;
     }
 
     [RelayCommand]
@@ -108,85 +310,29 @@ public partial class ClientDetailsViewModel(
         OnPropertyChanged(nameof(FullAddress));
     }
 
-    private async Task LoadDynamicBlocksAsync()
+    private async Task EnsureDynamicRecordLoadedAsync(CancellationToken cancellationToken = default)
     {
-        DynamicBlocks.Clear();
         if (CurrentClient is null)
         {
             return;
         }
 
-        var record = await _dynamicFormService.GetRecordForExternalEntityAsync(CurrentClient.Id);
+        var record = await _dynamicFormService.GetRecordForExternalEntityAsync(CurrentClient.Id, cancellationToken);
         if (record is null)
         {
-            var defaultTemplate = await _dynamicFormService.GetDefaultClientTemplateAsync();
-            record = await _dynamicFormService.GetOrCreateRecordAsync(CurrentClient.Id, defaultTemplate.Template.Id);
+            var defaultTemplate = await _dynamicFormService.GetDefaultClientTemplateAsync(cancellationToken);
+            await _dynamicFormService.EnsureClientTemplateAsync(CurrentClient.Id, defaultTemplate.Template.Id, cancellationToken);
+            record = await _dynamicFormService.GetRecordForExternalEntityAsync(CurrentClient.Id, cancellationToken);
         }
 
-        var template = await _dynamicFormService.GetTemplateAsync(record.Record.TemplateId)
-            ?? await _dynamicFormService.GetDefaultClientTemplateAsync();
-        foreach (var block in template.Blocks)
+        if (record is null)
         {
-            var instance = record.Blocks.FirstOrDefault(item => item.Block.BlockDefinitionId == block.Block.Id);
-            var values = instance?.Values.ToDictionary(value => value.FieldDefinitionId) ?? [];
-            DynamicBlocks.Add(new DynamicBlockDisplay
-            {
-                Name = block.Block.Name,
-                Fields = block.Fields.Select(field => new DynamicFieldDisplay
-                {
-                    Label = field.Label,
-                    FieldType = field.FieldType,
-                    Value = values.TryGetValue(field.Id, out var savedValue)
-                        ? GetStoredValue(field.FieldType, savedValue.ValueJson)
-                        : GetLegacyValue(field.Label)
-                }).ToList()
-            });
-        }
-    }
-
-    private string GetStoredValue(FieldType fieldType, string json)
-    {
-        try
-        {
-            return fieldType switch
-            {
-                FieldType.Phone => _serializer.Deserialize<PhoneNumberValue>(json) is { } phone
-                    ? $"{phone.CountryCode} {phone.Number}".Trim()
-                    : string.Empty,
-                FieldType.Address => _serializer.Deserialize<AddressValue>(json)?.ToDisplayString() ?? string.Empty,
-                FieldType.GeoPoint => _serializer.Deserialize<GeoPointValue>(json) is { } point
-                    ? $"{point.Latitude}, {point.Longitude}"
-                    : string.Empty,
-                FieldType.Comment => _serializer.Deserialize<CommentValue>(json)?.Text ?? string.Empty,
-                FieldType.Document => _serializer.Deserialize<DocumentValue>(json)?.FileName ?? string.Empty,
-                FieldType.Checkbox => System.Text.Json.JsonSerializer.Deserialize<bool>(json) ? "Oui" : "Non",
-                FieldType.Date => System.Text.Json.JsonSerializer.Deserialize<DateTime>(json).ToString("d"),
-                _ => System.Text.Json.JsonSerializer.Deserialize<string>(json) ?? string.Empty
-            };
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            return json;
-        }
-    }
-
-    private string GetLegacyValue(string label)
-    {
-        if (CurrentClient is null)
-        {
-            return string.Empty;
+            return;
         }
 
-        return label switch
-        {
-            "Prénom" => CurrentClient.FirstName,
-            "Nom" => CurrentClient.LastName,
-            "Téléphone" => CurrentClient.PhoneNumber,
-            "Email" => CurrentClient.Email ?? string.Empty,
-            "Adresse" => FullAddress,
-            "Localisation GPS" when HasLocation => $"{CurrentClient.Latitude}, {CurrentClient.Longitude}",
-            "Commentaire" => CurrentClient.Comment,
-            _ => string.Empty
-        };
+        var templateId = record.Record.TemplateId;
+        await _dynamicRecordViewModel.LoadAsync(CurrentClient.Id, templateId, cancellationToken);
+        OnPropertyChanged(nameof(TemplateName));
+        OnPropertyChanged(nameof(TemplateId));
     }
 }

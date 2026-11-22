@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:viewModels="clr-namespace:UltimateManager.ViewModels"
              x:Class="UltimateManager.Views.ClientDetailsPage"
+             x:Name="DetailsPage"
              x:DataType="viewModels:ClientDetailsViewModel"
              Title="Fiche client">
     <ScrollView>
@@ -14,142 +15,162 @@
 
             <VerticalStackLayout IsVisible="{Binding CurrentClient, Converter={StaticResource NullToFalseConverter}}"
                                  Spacing="4">
-                <Label Text="{Binding CurrentClient.FullName}"
-                       FontFamily="OpenSansSemibold"
-                       FontSize="28"
-                       TextColor="{StaticResource Gray900}" />
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                    <Button Text="✎"
+                            Clicked="OnEditClicked"
+                            Padding="8,4"
+                            VerticalOptions="Start"
+                            IsEnabled="{Binding IsEditing, Converter={StaticResource InverseBooleanConverter}}"
+                            SemanticProperties.Description="Ouvrir l’éditeur complet de la fiche" />
+                    <Grid Grid.Column="1" ColumnDefinitions="*,*" ColumnSpacing="8">
+                        <Entry Text="{Binding FirstName}"
+                               FontFamily="OpenSansSemibold"
+                               FontSize="28"
+                               TextColor="{StaticResource Gray900}"
+                               Placeholder="Prénom"
+                               IsReadOnly="{Binding IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                        <Entry Grid.Column="1"
+                               Text="{Binding LastName}"
+                               FontFamily="OpenSansSemibold"
+                               FontSize="28"
+                               TextColor="{StaticResource Gray900}"
+                               Placeholder="Nom"
+                               IsReadOnly="{Binding IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                    </Grid>
+                </Grid>
                 <Label Text="Fiche client"
                        FontSize="14"
                        TextColor="{StaticResource Gray500}" />
             </VerticalStackLayout>
 
-            <CollectionView ItemsSource="{Binding DynamicBlocks}"
-                            SelectionMode="None">
-                <CollectionView.ItemTemplate>
-                    <DataTemplate x:DataType="viewModels:DynamicBlockDisplay">
-                        <Border Margin="0,0,0,12"
-                                Padding="16"
-                                Stroke="{StaticResource Gray200}"
-                                StrokeShape="RoundRectangle 16">
-                            <VerticalStackLayout Spacing="10">
-                                <Label Text="{Binding Name}"
-                                       Style="{StaticResource SectionTitle}" />
-                                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Fields}"
-                                                     Spacing="8">
-                                    <BindableLayout.ItemTemplate>
-                                        <DataTemplate x:DataType="viewModels:DynamicFieldDisplay">
-                                            <Grid ColumnDefinitions="Auto,*"
-                                                  ColumnSpacing="12">
-                                                <Label Text="{Binding Label}"
-                                                       TextColor="{StaticResource Gray500}" />
-                                                <Label Grid.Column="1"
-                                                       Text="{Binding Value}"
-                                                       IsVisible="{Binding HasValue}" />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </BindableLayout.ItemTemplate>
+            <VerticalStackLayout Spacing="14">
+                <Label Text="Informations" Style="{StaticResource SectionTitle}" />
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding EditableDynamicBlocks}" Spacing="12">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="viewModels:DynamicRecordBlockItem">
+                            <Border Padding="14"
+                                    Stroke="{StaticResource Gray200}"
+                                    StrokeShape="RoundRectangle 16">
+                                <VerticalStackLayout Spacing="8">
+                                    <Entry Text="{Binding Name}"
+                                           FontAttributes="Bold"
+                                           IsReadOnly="True" />
+                                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding Fields}" Spacing="8">
+                                        <BindableLayout.ItemTemplate>
+                                            <DataTemplate x:DataType="viewModels:DynamicRecordFieldItem">
+                                                <VerticalStackLayout Spacing="6">
+                                                    <Label Text="{Binding Label}"
+                                                           FontSize="13"
+                                                           TextColor="{StaticResource Gray500}" />
+                                                    <Entry Text="{Binding Value}"
+                                                           IsVisible="{Binding IsSimple}"
+                                                           Placeholder="Saisir une valeur"
+                                                           IsReadOnly="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                    <Editor Text="{Binding Value}"
+                                                            IsVisible="{Binding IsLongText}"
+                                                            AutoSize="TextChanges"
+                                                            MinimumHeightRequest="90"
+                                                            IsReadOnly="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                    <CheckBox IsVisible="{Binding IsCheckbox}"
+                                                              IsChecked="{Binding BooleanValue}"
+                                                              HorizontalOptions="Start"
+                                                              IsEnabled="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing}" />
+                                                    <DatePicker IsVisible="{Binding IsDate}"
+                                                                Date="{Binding DateValue}"
+                                                                IsEnabled="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing}" />
+                                                    <Picker IsVisible="{Binding IsDropdown}"
+                                                            ItemsSource="{Binding Options}"
+                                                            SelectedItem="{Binding Value}"
+                                                            IsEnabled="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing}" />
+                                                    <Grid IsVisible="{Binding IsPhone}" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                        <Entry Text="{Binding CountryCode}"
+                                                               Keyboard="Telephone"
+                                                               Placeholder="+33"
+                                                               WidthRequest="80"
+                                                               IsReadOnly="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                        <Entry Grid.Column="1"
+                                                               Text="{Binding PhoneNumber}"
+                                                               Keyboard="Telephone"
+                                                               Placeholder="Téléphone"
+                                                               IsReadOnly="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                        <Button Grid.Column="2"
+                                                                Text="Appeler"
+                                                                Clicked="OnCallDynamicFieldClicked"
+                                                                Padding="8,3"
+                                                                IsVisible="{Binding HasPhoneValue}" />
+                                                    </Grid>
+                                                    <VerticalStackLayout IsVisible="{Binding IsAddress}" Spacing="6">
+                                                        <Entry Text="{Binding Address}"
+                                                               Placeholder="Adresse"
+                                                               IsReadOnly="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                        <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                                            <Entry Text="{Binding Latitude}"
+                                                                   Placeholder="Latitude"
+                                                                   Keyboard="Numeric"
+                                                                   IsReadOnly="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                            <Entry Grid.Column="1"
+                                                                   Text="{Binding Longitude}"
+                                                                   Placeholder="Longitude"
+                                                                   Keyboard="Numeric"
+                                                                   IsReadOnly="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                        </Grid>
+                                                        <HorizontalStackLayout Spacing="8">
+                                                            <Button Text="Choisir sur la carte"
+                                                                    Clicked="OnPickLocationClicked"
+                                                                    Padding="10,4"
+                                                                     IsVisible="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing}" />
+                                                            <Button Text="Ouvrir dans Google Maps" Clicked="OnOpenMapClicked" Padding="10,4" />
+                                                        </HorizontalStackLayout>
+                                                    </VerticalStackLayout>
+                                                    <VerticalStackLayout IsVisible="{Binding IsGeoPoint}" Spacing="6">
+                                                        <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                                            <Entry Text="{Binding Latitude}"
+                                                                   Placeholder="Latitude"
+                                                                   Keyboard="Numeric"
+                                                                   IsReadOnly="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                            <Entry Grid.Column="1"
+                                                                   Text="{Binding Longitude}"
+                                                                   Placeholder="Longitude"
+                                                                   Keyboard="Numeric"
+                                                                   IsReadOnly="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                        </Grid>
+                                                        <HorizontalStackLayout Spacing="8">
+                                                            <Button Text="Choisir sur la carte"
+                                                                    Clicked="OnPickLocationClicked"
+                                                                    Padding="10,4"
+                                                                     IsVisible="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing}" />
+                                                            <Button Text="Ouvrir dans Google Maps" Clicked="OnOpenMapClicked" Padding="10,4" />
+                                                        </HorizontalStackLayout>
+                                                    </VerticalStackLayout>
+                                                    <Grid IsVisible="{Binding IsDocument}" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                        <Entry Text="{Binding DocumentPath}" IsReadOnly="True" Placeholder="Aucun document" />
+                                                        <Button Grid.Column="1"
+                                                                Text="Choisir"
+                                                                Clicked="OnPickDocumentClicked"
+                                                                IsVisible="{Binding Source={x:Reference DetailsPage}, Path=BindingContext.IsEditing}" />
+                                                    </Grid>
+                                                </VerticalStackLayout>
+                                            </DataTemplate>
+                                        </BindableLayout.ItemTemplate>
+                                    </VerticalStackLayout>
                                 </VerticalStackLayout>
-                            </VerticalStackLayout>
-                        </Border>
-                    </DataTemplate>
-                </CollectionView.ItemTemplate>
-            </CollectionView>
-
-            <Border Padding="16"
-                    Stroke="{StaticResource Gray200}"
-                    StrokeShape="RoundRectangle 16">
-                <VerticalStackLayout Spacing="12">
-                    <Label Text="Informations personnelles"
-                           Style="{StaticResource SectionTitle}" />
-                    <Grid ColumnDefinitions="Auto,*"
-                          RowDefinitions="Auto,Auto"
-                          ColumnSpacing="12"
-                          RowSpacing="8">
-                        <Label Text="Prénom" TextColor="{StaticResource Gray500}" />
-                        <Label Grid.Column="1" Text="{Binding CurrentClient.FirstName}" />
-                        <Label Grid.Row="1" Text="Nom" TextColor="{StaticResource Gray500}" />
-                        <Label Grid.Row="1" Grid.Column="1" Text="{Binding CurrentClient.LastName}" />
-                    </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
                 </VerticalStackLayout>
-            </Border>
+            </VerticalStackLayout>
 
-            <Border IsVisible="{Binding HasPhone}"
-                    Padding="16"
-                    Stroke="{StaticResource Gray200}"
-                    StrokeShape="RoundRectangle 16">
-                <VerticalStackLayout Spacing="12">
-                    <Label Text="Téléphone" Style="{StaticResource SectionTitle}" />
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                        <Label Text="{Binding CurrentClient.PhoneNumber}"
-                               FontSize="17"
-                               VerticalOptions="Center" />
-                        <Button Text="Appeler"
-                                Grid.Column="1"
-                                Command="{Binding CallCommand}"
-                                HorizontalOptions="End" />
-                    </Grid>
-                    <Label Text="{Binding CurrentClient.Email}"
-                           IsVisible="{Binding CurrentClient.Email, Converter={StaticResource StringNotEmptyConverter}}"
-                           TextColor="{StaticResource Gray500}" />
-                </VerticalStackLayout>
-            </Border>
-
-            <Border IsVisible="{Binding HasAddress}"
-                    Padding="16"
-                    Stroke="{StaticResource Gray200}"
-                    StrokeShape="RoundRectangle 16">
-                <VerticalStackLayout Spacing="12">
-                    <Label Text="Adresse" Style="{StaticResource SectionTitle}" />
-                    <Label Text="{Binding FullAddress}" FontSize="16" />
-                    <Button Text="Copier l’adresse"
-                            Command="{Binding CopyAddressCommand}"
-                            HorizontalOptions="Start" />
-                </VerticalStackLayout>
-            </Border>
-
-            <Border IsVisible="{Binding HasLocation}"
-                    Padding="16"
-                    Stroke="{StaticResource Gray200}"
-                    StrokeShape="RoundRectangle 16">
-                <VerticalStackLayout Spacing="12">
-                    <Label Text="Localisation GPS" Style="{StaticResource SectionTitle}" />
-                    <Label Text="{Binding CurrentClient.Latitude, StringFormat='Latitude : {0}'}" />
-                    <Label Text="{Binding CurrentClient.Longitude, StringFormat='Longitude : {0}'}" />
-                    <Button Text="Open in map"
-                            Command="{Binding OpenMapCommand}"
-                            HorizontalOptions="Start" />
-                </VerticalStackLayout>
-            </Border>
-
-            <Border IsVisible="{Binding HasComment}"
-                    Padding="16"
-                    Stroke="{StaticResource Gray200}"
-                    StrokeShape="RoundRectangle 16">
-                <VerticalStackLayout Spacing="12">
-                    <Label Text="Commentaire" Style="{StaticResource SectionTitle}" />
-                    <Label Text="{Binding CurrentClient.Comment}" />
-                </VerticalStackLayout>
-            </Border>
-
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                <Button Text="Modifier"
-                        Clicked="OnEditClicked"
-                        HorizontalOptions="Fill" />
+            <Grid IsVisible="{Binding IsEditing, Converter={StaticResource InverseBooleanConverter}}" ColumnDefinitions="*,*" ColumnSpacing="12">
+                <Button Text="Modifier" Clicked="OnModifyClicked" />
                 <Button Text="Supprimer"
                         Grid.Column="1"
                         Clicked="OnDeleteClicked"
                         BackgroundColor="#C62828"
                         HorizontalOptions="Fill" />
             </Grid>
-            <Button Text="Modifier la fiche personnalisée"
-                    Clicked="OnDynamicEditClicked"
-                    HorizontalOptions="Fill" />
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                <Button Text="Modifier le template"
-                        Clicked="OnEditTemplateClicked" />
-                <Button Grid.Column="1"
-                        Text="Nouveau template"
-                        Clicked="OnCloneTemplateClicked" />
+            <Grid IsVisible="{Binding IsEditing}" ColumnDefinitions="*,*" ColumnSpacing="12">
+                <Button Text="Annuler" Clicked="OnCancelEditClicked" />
+                <Button Grid.Column="1" Text="Enregistrer" Clicked="OnSaveEditClicked" IsEnabled="{Binding IsSaving, Converter={StaticResource InverseBooleanConverter}}" />
             </Grid>
         </VerticalStackLayout>
     </ScrollView>

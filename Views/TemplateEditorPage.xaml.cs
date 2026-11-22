@@ -1,4 +1,4 @@
-using UltimateManager.Models.DynamicForms;
+﻿using UltimateManager.Models.DynamicForms;
 using UltimateManager.ViewModels;
 
 namespace UltimateManager.Views;
@@ -19,6 +19,53 @@ public partial class TemplateEditorPage : ContentPage, IQueryAttributable
         if (query.TryGetValue("id", out var value) && Guid.TryParse(value?.ToString(), out var id))
         {
             await _viewModel.LoadAsync(id);
+        }
+    }
+
+    private async void OnChangeFieldTypeClicked(object? sender, EventArgs e)
+    {
+        if (sender is not Button { BindingContext: TemplateFieldEditorItem field })
+        {
+            return;
+        }
+
+        var fieldTypes = new Dictionary<string, FieldType>
+        {
+            ["Texte court"] = FieldType.ShortText,
+            ["Texte long"] = FieldType.LongText,
+            ["Nombre"] = FieldType.Number,
+            ["Date"] = FieldType.Date,
+            ["Téléphone"] = FieldType.Phone,
+            ["Adresse"] = FieldType.Address,
+            ["Coordonnées GPS"] = FieldType.GeoPoint,
+            ["Email"] = FieldType.Email,
+            ["URL"] = FieldType.Url,
+            ["Case à cocher"] = FieldType.Checkbox,
+            ["Liste déroulante"] = FieldType.Dropdown,
+            ["Commentaire"] = FieldType.Comment,
+            ["Document"] = FieldType.Document
+        };
+        var selected = await DisplayActionSheetAsync("Type de l’élément", "Annuler", null, fieldTypes.Keys.ToArray());
+        if (selected is not null && fieldTypes.TryGetValue(selected, out var fieldType))
+        {
+            await _viewModel.ChangeFieldTypeAsync(field, fieldType);
+        }
+    }
+
+    private async void OnSaveAsTemplateClicked(object? sender, EventArgs e)
+    {
+        var defaultName = string.IsNullOrWhiteSpace(_viewModel.TemplateName)
+            ? "Nouveau modèle"
+            : $"Copie de {_viewModel.TemplateName}";
+        var name = await DisplayPromptAsync(
+            "Sauvegarder comme modèle",
+            "Nom du modèle",
+            "Sauvegarder",
+            "Annuler",
+            defaultName);
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            await _viewModel.SaveAsTemplateAsync(name.Trim());
         }
     }
 
@@ -62,7 +109,7 @@ public partial class TemplateEditorPage : ContentPage, IQueryAttributable
             ["Commentaire"] = FieldType.Comment,
             ["Document"] = FieldType.Document
         };
-        var selected = await DisplayActionSheet("Type d’élément", "Annuler", null, fieldTypes.Keys.ToArray());
+        var selected = await DisplayActionSheetAsync("Type d’élément", "Annuler", null, fieldTypes.Keys.ToArray());
         if (selected is null || !fieldTypes.TryGetValue(selected, out var fieldType))
         {
             return;
@@ -81,7 +128,15 @@ public partial class TemplateEditorPage : ContentPage, IQueryAttributable
     {
         if (sender is Entry { BindingContext: TemplateBlockEditorItem block })
         {
-            await _viewModel.RenameBlockAsync(block, block.Name);
+            await RenameBlockAsync(block);
+        }
+    }
+
+    private async void OnBlockNameUnfocused(object? sender, FocusEventArgs e)
+    {
+        if (sender is Entry { BindingContext: TemplateBlockEditorItem block })
+        {
+            await RenameBlockAsync(block);
         }
     }
 
@@ -89,9 +144,23 @@ public partial class TemplateEditorPage : ContentPage, IQueryAttributable
     {
         if (sender is Entry { BindingContext: TemplateFieldEditorItem field })
         {
-            await _viewModel.RenameFieldAsync(field, field.Label);
+            await RenameFieldAsync(field);
         }
     }
+
+    private async void OnFieldNameUnfocused(object? sender, FocusEventArgs e)
+    {
+        if (sender is Entry { BindingContext: TemplateFieldEditorItem field })
+        {
+            await RenameFieldAsync(field);
+        }
+    }
+
+    private Task RenameBlockAsync(TemplateBlockEditorItem block) =>
+        _viewModel.RenameBlockAsync(block, block.Name);
+
+    private Task RenameFieldAsync(TemplateFieldEditorItem field) =>
+        _viewModel.RenameFieldAsync(field, field.Label);
 
     private async void OnDeleteBlockClicked(object? sender, EventArgs e)
     {

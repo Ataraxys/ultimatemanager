@@ -25,7 +25,7 @@
                         <Border.GestureRecognizers>
                             <TapGestureRecognizer Tapped="OnTemplateTapped" />
                         </Border.GestureRecognizers>
-                        <Grid ColumnDefinitions="*,Auto,Auto">
+                        <Grid ColumnDefinitions="*,Auto,Auto,Auto">
                             <VerticalStackLayout Spacing="4">
                                 <Label Text="{Binding Name}"
                                        FontFamily="OpenSansSemibold"
@@ -38,7 +38,13 @@
                                     Clicked="OnSetDefaultClicked"
                                     Padding="8,0"
                                     VerticalOptions="Center" />
-                            <Label Grid.Column="2"
+                            <Button Grid.Column="2"
+                                    Text="Supprimer"
+                                    Clicked="OnDeleteClicked"
+                                    Padding="8,0"
+                                    TextColor="#C62828"
+                                    VerticalOptions="Center" />
+                            <Label Grid.Column="3"
                                    Text=">"
                                    FontSize="24"
                                    TextColor="{StaticResource Primary}"

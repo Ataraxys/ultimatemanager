@@ -7,6 +7,7 @@
              Title="Personnaliser le modèle">
     <ContentPage.ToolbarItems>
         <ToolbarItem Text="+ Bloc" Clicked="OnAddBlockClicked" />
+        <ToolbarItem Text="Sauvegarder comme modèle" Clicked="OnSaveAsTemplateClicked" />
     </ContentPage.ToolbarItems>
     <ScrollView>
         <VerticalStackLayout Padding="20,16,20,28" Spacing="16">
@@ -27,6 +28,7 @@
                                       ColumnSpacing="6">
                                     <Entry Text="{Binding Name}"
                                            Completed="OnBlockNameCompleted"
+                                            Unfocused="OnBlockNameUnfocused"
                                            ReturnType="Done" />
                                     <Button Grid.Column="1"
                                             Text="↑"
@@ -53,12 +55,15 @@
                                                   ColumnSpacing="5">
                                                 <Entry Text="{Binding Label}"
                                                        Completed="OnFieldNameCompleted"
+                                                       Unfocused="OnFieldNameUnfocused"
                                                        ReturnType="Done" />
-                                                <Label Grid.Column="1"
-                                                       Text="{Binding FieldType}"
-                                                       FontSize="12"
-                                                       TextColor="{StaticResource Gray500}"
-                                                       VerticalOptions="Center" />
+                                                <Button Grid.Column="1"
+                                                        Text="{Binding FieldType}"
+                                                        Clicked="OnChangeFieldTypeClicked"
+                                                        FontSize="12"
+                                                        Padding="4,0"
+                                                        TextColor="{StaticResource Gray500}"
+                                                        VerticalOptions="Center" />
                                                 <Button Grid.Column="2"
                                                         Text="↑"
                                                         Clicked="OnMoveFieldUpClicked"

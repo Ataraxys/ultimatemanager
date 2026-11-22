@@ -57,4 +57,26 @@ public partial class TemplatesPage : ContentPage
         await service.SetDefaultTemplateAsync(template.Id);
         await DisplayAlertAsync("Template par défaut", $"« {template.Name} » sera utilisé pour les nouveaux clients.", "OK");
     }
+
+    private async void OnDeleteClicked(object? sender, EventArgs e)
+    {
+        if (sender is not Button { BindingContext: EntityTemplate template } ||
+            !await DisplayAlertAsync(
+                "Supprimer le modèle",
+                $"Supprimer « {template.Name} » ? Cette action est irréversible.",
+                "Supprimer",
+                "Annuler"))
+        {
+            return;
+        }
+
+        try
+        {
+            await _viewModel.DeleteAsync(template);
+        }
+        catch (InvalidOperationException exception)
+        {
+            await DisplayAlertAsync("Suppression impossible", exception.Message, "OK");
+        }
+    }
 }

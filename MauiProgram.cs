@@ -38,7 +38,6 @@ namespace UltimateManager
             builder.Services.AddTransient<ContactImportPage>();
             builder.Services.AddTransient<TemplatesPage>();
             builder.Services.AddTransient<TemplateEditorPage>();
-            builder.Services.AddTransient<ClientDynamicRecordPage>();
 
             builder.Services.AddTransient<ClientsViewModel>();
             builder.Services.AddTransient<ClientDetailsViewModel>();

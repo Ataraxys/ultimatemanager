@@ -63,4 +63,11 @@ public partial class TemplatesViewModel(IDynamicFormService formService, IAutoma
         await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
         return template.Template;
     }
+
+    public async Task DeleteAsync(EntityTemplate template, CancellationToken cancellationToken = default)
+    {
+        await _formService.DeleteTemplateAsync(template.Id, cancellationToken);
+        Templates.Remove(template);
+        await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
+    }
 }

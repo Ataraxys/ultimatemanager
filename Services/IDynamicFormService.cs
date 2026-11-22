@@ -12,6 +12,8 @@ public interface IDynamicFormService
 
     Task<TemplateDefinition> CloneTemplateAsync(Guid sourceTemplateId, string name, CancellationToken cancellationToken = default);
 
+    Task<TemplateDefinition> EnsureClientTemplateAsync(Guid externalEntityId, Guid sourceTemplateId, CancellationToken cancellationToken = default);
+
     Task<TemplateDefinition> CreateTemplateAsync(string name, string entityType = "Client", CancellationToken cancellationToken = default);
 
     Task<TemplateDefinition> EnsureDefaultClientTemplateAsync(CancellationToken cancellationToken = default);
@@ -19,6 +21,8 @@ public interface IDynamicFormService
     Task<TemplateDefinition> GetDefaultClientTemplateAsync(CancellationToken cancellationToken = default);
 
     Task SetDefaultTemplateAsync(Guid templateId, CancellationToken cancellationToken = default);
+
+    Task DeleteTemplateAsync(Guid templateId, CancellationToken cancellationToken = default);
 
     Task<BlockDefinition> AddBlockAsync(Guid templateId, string name, CancellationToken cancellationToken = default);
 

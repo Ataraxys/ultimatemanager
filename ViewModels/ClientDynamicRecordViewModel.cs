@@ -18,12 +18,25 @@ public sealed class ClientDynamicRecordViewModel(
     private readonly IMapProvider _mapProvider = mapProvider;
     private readonly IAutomaticBackupService _automaticBackupService = automaticBackupService;
     private Guid _recordId;
+    private Guid _templateId;
+    private readonly Dictionary<Guid, string> _initialFieldValues = [];
 
     public ObservableCollection<DynamicRecordBlockItem> Blocks { get; } = [];
 
     public string TemplateName { get; private set; } = string.Empty;
 
+    public Guid TemplateId => _templateId;
+
     public bool IsBusy { get; private set; }
+
+    public void BeginEditing()
+    {
+        _initialFieldValues.Clear();
+        foreach (var field in Blocks.SelectMany(block => block.Fields))
+        {
+            _initialFieldValues[field.Id] = field.SerializeValue();
+        }
+    }
 
     public async Task LoadAsync(Guid clientId, Guid templateId, CancellationToken cancellationToken = default)
     {
@@ -35,17 +48,41 @@ public sealed class ClientDynamicRecordViewModel(
             var template = await _formService.GetTemplateAsync(templateId, cancellationToken)
                 ?? throw new InvalidOperationException("Le modèle demandé n’existe pas.");
             _recordId = record.Record.Id;
+            _templateId = template.Template.Id;
             TemplateName = template.Template.Name;
             OnPropertyChanged(nameof(TemplateName));
             Blocks.Clear();
+            _initialFieldValues.Clear();
             foreach (var block in template.Blocks)
             {
                 var instance = record.Blocks.FirstOrDefault(item => item.Block.BlockDefinitionId == block.Block.Id);
                 var values = instance?.Values.ToDictionary(value => value.FieldDefinitionId) ?? [];
-                Blocks.Add(new DynamicRecordBlockItem(
+                var hasAddress = block.Fields.Any(field => field.FieldType == FieldType.Address);
+                var fields = block.Fields
+                    .Where(field => !hasAddress || field.FieldType != FieldType.GeoPoint)
+                    .Select(field => new DynamicRecordFieldItem(field, values.GetValueOrDefault(field.Id), _serializer))
+                    .ToList();
+                var addressField = fields.FirstOrDefault(field => field.IsAddress);
+                var legacyGeoPoint = block.Fields.FirstOrDefault(field => field.FieldType == FieldType.GeoPoint);
+                if (addressField is not null && legacyGeoPoint is not null && values.TryGetValue(legacyGeoPoint.Id, out var geoValue) &&
+                    !addressField.TryGetCoordinates(out _, out _))
+                {
+                    var point = _serializer.Deserialize<GeoPointValue>(geoValue.ValueJson);
+                    if (point is not null)
+                    {
+                        addressField.Latitude = point.Latitude.ToString(CultureInfo.InvariantCulture);
+                        addressField.Longitude = point.Longitude.ToString(CultureInfo.InvariantCulture);
+                    }
+                }
+                var blockItem = new DynamicRecordBlockItem(
                     block.Block.Id,
                     block.Block.Name,
-                    block.Fields.Select(field => new DynamicRecordFieldItem(field, values.GetValueOrDefault(field.Id), _serializer)).ToList()));
+                    fields);
+                Blocks.Add(blockItem);
+                foreach (var field in blockItem.Fields)
+                {
+                    _initialFieldValues[field.Id] = field.SerializeValue();
+                }
             }
         }
         finally
@@ -66,15 +103,30 @@ public sealed class ClientDynamicRecordViewModel(
         OnPropertyChanged(nameof(IsBusy));
         try
         {
+            var hasChanges = false;
             foreach (var field in Blocks.SelectMany(block => block.Fields))
             {
+                var serializedValue = field.SerializeValue();
+                if (_initialFieldValues.TryGetValue(field.Id, out var initialValue) &&
+                    string.Equals(initialValue, serializedValue, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 await _formService.SaveFieldValueAsync(
                     _recordId,
                     field.Id,
-                    field.SerializeValue(),
+                    serializedValue,
                     cancellationToken);
+                _initialFieldValues[field.Id] = serializedValue;
+                hasChanges = true;
             }
-            await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
+
+            if (hasChanges)
+            {
+                await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
+            }
+
             return true;
         }
         finally
@@ -102,6 +154,20 @@ public sealed class ClientDynamicRecordViewModel(
         field.Address = result.Address ?? field.Address;
     }
 
+    public async Task OpenInMapAsync(DynamicRecordFieldItem field)
+    {
+        var query = field.TryGetCoordinates(out var latitude, out var longitude)
+            ? $"{latitude.ToString(CultureInfo.InvariantCulture)},{longitude.ToString(CultureInfo.InvariantCulture)}"
+            : field.Address;
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return;
+        }
+
+        var url = $"https://www.google.com/maps/search/?api=1&query={Uri.EscapeDataString(query)}";
+        await Launcher.Default.OpenAsync(url);
+    }
+
     public async Task AddFieldAsync(
         DynamicRecordBlockItem block,
         FieldType fieldType,
@@ -115,6 +181,80 @@ public sealed class ClientDynamicRecordViewModel(
             cancellationToken);
         block.Fields.Add(new DynamicRecordFieldItem(field, null, _serializer));
         await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
+    }
+
+    public async Task<DynamicRecordBlockItem> AddBlockAsync(
+        string? name,
+        CancellationToken cancellationToken = default)
+    {
+        var block = await _formService.AddBlockAsync(
+            _templateId,
+            string.IsNullOrWhiteSpace(name) ? "Nouveau bloc" : name.Trim(),
+            cancellationToken);
+        var item = new DynamicRecordBlockItem(block.Id, block.Name, []);
+        Blocks.Add(item);
+        await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
+        return item;
+    }
+
+    public async Task DeleteBlockAsync(
+        DynamicRecordBlockItem block,
+        CancellationToken cancellationToken = default)
+    {
+        await _formService.DeleteBlockAsync(block.BlockDefinitionId, cancellationToken);
+        Blocks.Remove(block);
+        await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
+    }
+
+    public async Task DeleteFieldAsync(
+        DynamicRecordBlockItem block,
+        DynamicRecordFieldItem field,
+        CancellationToken cancellationToken = default)
+    {
+        await _formService.DeleteFieldAsync(field.Id, cancellationToken);
+        block.Fields.Remove(field);
+        await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
+    }
+
+    public async Task MoveFieldAsync(
+        DynamicRecordBlockItem block,
+        DynamicRecordFieldItem field,
+        int offset,
+        CancellationToken cancellationToken = default)
+    {
+        await _formService.MoveFieldAsync(block.BlockDefinitionId, field.Id, offset, cancellationToken);
+        var index = block.Fields.IndexOf(field);
+        var target = Math.Clamp(index + offset, 0, block.Fields.Count - 1);
+        if (index != target)
+        {
+            block.Fields.RemoveAt(index);
+            block.Fields.Insert(target, field);
+        }
+
+        await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
+    }
+
+    public async Task SaveTemplateChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var template = await _formService.GetTemplateAsync(_templateId, cancellationToken)
+            ?? throw new InvalidOperationException("Le modèle demandé n’existe pas.");
+
+        foreach (var blockItem in Blocks)
+        {
+            var block = template.Blocks.FirstOrDefault(item => item.Block.Id == blockItem.BlockDefinitionId)?.Block;
+            if (block is null)
+            {
+                continue;
+            }
+
+            block.Name = blockItem.Name.Trim();
+            await _formService.UpdateBlockAsync(block, cancellationToken);
+            foreach (var fieldItem in blockItem.Fields)
+            {
+                fieldItem.Definition.Label = fieldItem.Label.Trim();
+                await _formService.UpdateFieldAsync(fieldItem.Definition, cancellationToken);
+            }
+        }
     }
 
     private static string GetDefaultLabel(FieldType fieldType) => fieldType switch
@@ -136,11 +276,18 @@ public sealed class ClientDynamicRecordViewModel(
     };
 }
 
-public sealed class DynamicRecordBlockItem(Guid blockDefinitionId, string name, IEnumerable<DynamicRecordFieldItem> fields)
+public sealed class DynamicRecordBlockItem(Guid blockDefinitionId, string name, IEnumerable<DynamicRecordFieldItem> fields) : ObservableObject
 {
     public Guid BlockDefinitionId { get; } = blockDefinitionId;
-    public string Name { get; } = name;
-    public IList<DynamicRecordFieldItem> Fields { get; } = fields.ToList();
+    private string name = name;
+
+    public string Name
+    {
+        get => name;
+        set => SetProperty(ref name, value);
+    }
+
+    public ObservableCollection<DynamicRecordFieldItem> Fields { get; } = new(fields);
 }
 
 public sealed class DynamicRecordFieldItem : ObservableObject
@@ -160,18 +307,24 @@ public sealed class DynamicRecordFieldItem : ObservableObject
     private string latitude = string.Empty;
     private string longitude = string.Empty;
     private string documentPath = string.Empty;
+    private string label;
 
     public DynamicRecordFieldItem(FieldDefinition definition, FieldValue? savedValue, DynamicFieldValueSerializer serializer)
     {
         Definition = definition;
         _serializer = serializer;
+        label = definition.Label;
         Options = DeserializeOptions(definition.OptionsJson);
         LoadValue(savedValue?.ValueJson);
     }
 
     public FieldDefinition Definition { get; }
     public Guid Id => Definition.Id;
-    public string Label => Definition.Label;
+    public string Label
+    {
+        get => label;
+        set => SetProperty(ref label, value);
+    }
     public FieldType FieldType => Definition.FieldType;
     public IReadOnlyList<string> Options { get; }
     public bool IsLongText => FieldType is FieldType.LongText or FieldType.Comment;
@@ -184,12 +337,33 @@ public sealed class DynamicRecordFieldItem : ObservableObject
     public bool IsGeoPoint => FieldType == FieldType.GeoPoint;
     public bool IsDocument => FieldType == FieldType.Document;
     public bool HasMapAction => IsAddress || IsGeoPoint;
+    public bool HasPhoneValue => IsPhone && !string.IsNullOrWhiteSpace(PhoneNumber);
 
     public string Value { get => value; set => SetProperty(ref this.value, value); }
     public bool BooleanValue { get => booleanValue; set => SetProperty(ref booleanValue, value); }
     public DateTime DateValue { get => dateValue; set => SetProperty(ref dateValue, value); }
-    public string PhoneNumber { get => phoneNumber; set => SetProperty(ref phoneNumber, value); }
-    public string CountryCode { get => countryCode; set => SetProperty(ref countryCode, value); }
+    public string PhoneNumber
+    {
+        get => phoneNumber;
+        set
+        {
+            if (SetProperty(ref phoneNumber, value))
+            {
+                OnPropertyChanged(nameof(HasPhoneValue));
+            }
+        }
+    }
+    public string CountryCode
+    {
+        get => countryCode;
+        set
+        {
+            if (SetProperty(ref countryCode, value))
+            {
+                OnPropertyChanged(nameof(HasPhoneValue));
+            }
+        }
+    }
     public bool IsPrimaryPhone { get => isPrimaryPhone; set => SetProperty(ref isPrimaryPhone, value); }
     public string Address { get => address; set => SetProperty(ref address, value); }
     public string AddressNumber { get => addressNumber; set => SetProperty(ref addressNumber, value); }
@@ -209,7 +383,10 @@ public sealed class DynamicRecordFieldItem : ObservableObject
             Number = AddressNumber,
             PostalCode = PostalCode,
             City = City,
-            Country = Country
+            Country = Country,
+            Location = TryGetCoordinates(out var latitude, out var longitude)
+                ? new GeoPointValue { Latitude = latitude, Longitude = longitude }
+                : null
         }),
         FieldType.GeoPoint => _serializer.Serialize(new GeoPointValue
         {
@@ -242,11 +419,13 @@ public sealed class DynamicRecordFieldItem : ObservableObject
                     break;
                 case FieldType.Address:
                     var addressValue = _serializer.Deserialize<AddressValue>(json);
-                    Address = addressValue?.Street ?? string.Empty;
+                    Address = addressValue?.ToDisplayString() ?? string.Empty;
                     AddressNumber = addressValue?.Number ?? string.Empty;
                     PostalCode = addressValue?.PostalCode ?? string.Empty;
                     City = addressValue?.City ?? string.Empty;
                     Country = addressValue?.Country ?? string.Empty;
+                    Latitude = addressValue?.Location?.Latitude.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+                    Longitude = addressValue?.Location?.Longitude.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
                     break;
                 case FieldType.GeoPoint:
                     var point = _serializer.Deserialize<GeoPointValue>(json);
@@ -269,11 +448,19 @@ public sealed class DynamicRecordFieldItem : ObservableObject
                     Value = JsonSerializer.Deserialize<string>(json) ?? string.Empty;
                     break;
             }
+
         }
         catch (JsonException)
         {
             Value = json;
         }
+    }
+
+    public bool TryGetCoordinates(out double latitude, out double longitude)
+    {
+        var latitudeValid = double.TryParse(Latitude, NumberStyles.Float, CultureInfo.InvariantCulture, out latitude);
+        var longitudeValid = double.TryParse(Longitude, NumberStyles.Float, CultureInfo.InvariantCulture, out longitude);
+        return latitudeValid && longitudeValid;
     }
 
     private static IReadOnlyList<string> DeserializeOptions(string optionsJson)

@@ -23,9 +23,14 @@ public sealed class SqliteDynamicFormService : IDynamicFormService
             .Where(template => template.WorkspaceId == _workspaceContext.WorkspaceId)
             .OrderBy(template => template.Name)
             .ToListAsync();
+        var clientTemplateIds = (await _connection.Table<EntityRecord>()
+                .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId)
+                .ToListAsync())
+            .Select(record => record.TemplateId)
+            .ToHashSet();
 
-        var result = new List<TemplateDefinition>(templates.Count);
-        foreach (var template in templates)
+        var result = new List<TemplateDefinition>(Math.Max(templates.Count - clientTemplateIds.Count, 0));
+        foreach (var template in templates.Where(template => !clientTemplateIds.Contains(template.Id)))
         {
             result.Add(await LoadTemplateAsync(template, cancellationToken));
         }
@@ -79,6 +84,33 @@ public sealed class SqliteDynamicFormService : IDynamicFormService
             ?? throw new InvalidOperationException("Le template cloné est introuvable.");
     }
 
+    public async Task<TemplateDefinition> EnsureClientTemplateAsync(
+        Guid externalEntityId,
+        Guid sourceTemplateId,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        var existingRecord = await _connection.Table<EntityRecord>()
+            .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId &&
+                             record.ExternalEntityId == externalEntityId)
+            .OrderByDescending(record => record.UpdatedAt)
+            .FirstOrDefaultAsync();
+        if (existingRecord is not null)
+        {
+            return await GetTemplateAsync(existingRecord.TemplateId, cancellationToken)
+                ?? throw new InvalidOperationException("Le template de la fiche client est introuvable.");
+        }
+
+        var clientTemplate = sourceTemplateId == Guid.Empty
+            ? await CreateTemplateAsync($"Fiche de {externalEntityId:N}", "Client", cancellationToken)
+            : await CloneTemplateAsync(
+                sourceTemplateId,
+                $"Fiche de {externalEntityId:N}",
+                cancellationToken);
+        await GetOrCreateRecordAsync(externalEntityId, clientTemplate.Template.Id, cancellationToken);
+        return clientTemplate;
+    }
+
     public async Task<TemplateDefinition> CreateTemplateAsync(
         string name,
         string entityType = "Client",
@@ -122,8 +154,7 @@ public sealed class SqliteDynamicFormService : IDynamicFormService
             }),
             (Name: "Coordonnées", Fields: new[]
             {
-                ("Téléphone", FieldType.Phone), ("Email", FieldType.Email), ("Adresse", FieldType.Address),
-                ("Localisation GPS", FieldType.GeoPoint)
+                ("Téléphone", FieldType.Phone), ("Email", FieldType.Email), ("Adresse", FieldType.Address)
             }),
             (Name: "Informations complémentaires", Fields: new[]
             {
@@ -202,6 +233,48 @@ public sealed class SqliteDynamicFormService : IDynamicFormService
 
         workspace.DefaultTemplateId = templateId;
         await _connection.UpdateAsync(workspace);
+    }
+
+    public async Task DeleteTemplateAsync(Guid templateId, CancellationToken cancellationToken = default)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        var template = await _connection.FindAsync<EntityTemplate>(templateId);
+        if (template is null || template.WorkspaceId != _workspaceContext.WorkspaceId)
+        {
+            throw new InvalidOperationException("Le modèle demandé n’existe pas dans cet espace de travail.");
+        }
+
+        var workspace = await _connection.FindAsync<Workspace>(_workspaceContext.WorkspaceId);
+        if (workspace?.DefaultTemplateId == templateId)
+        {
+            throw new InvalidOperationException("Le modèle par défaut ne peut pas être supprimé.");
+        }
+
+        var isUsedByClient = await _connection.Table<EntityRecord>()
+            .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId && record.TemplateId == templateId)
+            .FirstOrDefaultAsync() is not null;
+        if (isUsedByClient)
+        {
+            throw new InvalidOperationException("Ce modèle est utilisé par une fiche client et ne peut pas être supprimé.");
+        }
+
+        var blocks = await _connection.Table<BlockDefinition>()
+            .Where(block => block.TemplateId == templateId)
+            .ToListAsync();
+        foreach (var block in blocks)
+        {
+            var fields = await _connection.Table<FieldDefinition>()
+                .Where(field => field.BlockDefinitionId == block.Id)
+                .ToListAsync();
+            foreach (var field in fields)
+            {
+                await _connection.DeleteAsync(field);
+            }
+
+            await _connection.DeleteAsync(block);
+        }
+
+        await _connection.DeleteAsync(template);
     }
 
     public async Task<BlockDefinition> AddBlockAsync(
@@ -493,6 +566,9 @@ public sealed class SqliteDynamicFormService : IDynamicFormService
             .Where(block => block.EntityRecordId == recordId)
             .OrderBy(block => block.DisplayOrder)
             .ToListAsync();
+        var values = await _connection.Table<FieldValue>()
+            .Where(value => value.EntityRecordId == recordId)
+            .ToListAsync();
         var models = new List<BlockInstanceModel>(blocks.Count);
         foreach (var block in blocks)
         {
@@ -500,9 +576,6 @@ public sealed class SqliteDynamicFormService : IDynamicFormService
                 .Where(field => field.BlockDefinitionId == block.BlockDefinitionId)
                 .ToListAsync();
             var fieldIds = fieldDefinitions.Select(field => field.Id).ToHashSet();
-            var values = await _connection.Table<FieldValue>()
-                .Where(value => value.EntityRecordId == recordId)
-                .ToListAsync();
             models.Add(new BlockInstanceModel
             {
                 Block = block,
