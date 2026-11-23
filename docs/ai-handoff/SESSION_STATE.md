@@ -66,3 +66,12 @@ Mission 1 — Step 4B: read-only detailed design of the SQLite migration and har
 - No dynamic-engine redesign in the SQLite-centralization mission.
 - Preserve the exact UI rule: “Modifier” edits content only; pencil “✎” edits the full structure/template.
 - Do not claim that local uncommitted changes are visible through GitHub.
+
+
+## Cloud orchestration rollout
+
+- On 2026-11-23, the user selected fully cloud-based orchestration.
+- Infrastructure branch: `feature/cloud-ai-orchestration`.
+- The branch contains the GitHub Actions orchestrator, executor/reviewer instructions, architecture and setup documentation, and the updated handoff protocol.
+- The workflow is not active until its PR is reviewed/merged into `develop` and the repository Actions secret `OPENAI_API_KEY` is added.
+- First activation must be a harmless read-only smoke test. Cloud MAUI build/test coverage remains a separate follow-up after inspecting the solution and test projects.
