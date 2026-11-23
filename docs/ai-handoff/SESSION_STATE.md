@@ -1,0 +1,60 @@
+# UltimateManager — AI Session State
+
+Last updated: 2026-11-23
+
+## Collaboration model
+
+- ChatGPT acts as product/technical cofounder: roadmap, architecture, technical arbitration, independent review, and approval of next steps.
+- Codex / GitHub Copilot agents execute repository analysis, implementation, and QA within explicitly assigned scopes.
+- Shared handoff location: `docs/ai-handoff/`.
+- ChatGPT → Codex: `docs/ai-handoff/outbox/`.
+- Codex → ChatGPT: `docs/ai-handoff/inbox/`.
+- All completed agent reports must be saved as unique `.txt` files and also included in the agent's final response.
+
+## Product and architecture direction
+
+- UltimateManager is intended to evolve into a polished, extensible business-management platform with eventual SaaS/commercial potential.
+- Build local-first with SQLite now; do not introduce cloud sync prematurely.
+- Keep standard business entities strongly typed (for example Contact, Task, Project, Event, Document).
+- Use a dynamic object/field engine for user-defined object types and custom fields; do not turn every business entity into a generic ObjectRecord.
+- Workspaces are a central future boundary; groups, users, contacts, and permissions will evolve around them.
+- Prefer clean, maintainable object-oriented architecture without premature project splitting or overengineering.
+- Preserve existing functionality and user data; avoid destructive schema or restore operations.
+- Record architectural decisions in `docs/01-architecture/DECISIONS.md` and update affected documentation.
+
+## Mission 1 — SQLite security, migrations and backups
+
+### Completed and reviewed
+
+- Step 1: SQLite API/design verification completed, with journal-mode probe limitation documented.
+- Step 2 / 2B / 2C: central `ISqliteDatabase` contract and `SQLiteDatabaseCoordinator` implemented and independently reviewed. Status: VALIDÉ SOUS RÉSERVES.
+- Step 3: `SqliteClientService` migrated to `ISqliteDatabase`; CRUD/search and JSON backup triggers preserved. Harness and Android Debug build passed. Independent QA status: VALIDÉ SOUS RÉSERVES.
+
+### Accepted reservations
+
+- JSON backup generation can race under concurrent client writes; ordering/serialization needs a dedicated design.
+- Historical-data test is not a fixture from a real prior schema.
+- Initialization uniqueness is not directly instrumented.
+- Dynamic-table initialization is not covered by end-to-end fresh-install integration tests.
+- Real backup file failures are not injected.
+- `SqliteDynamicFormService`, `LocalWorkspaceContext`, and `CompleteBackupService` still have independent SQLite connections; global centralization is not complete.
+- Coordinator CloseAsync / ExitLock failure injection remains untested.
+
+## Current next step
+
+Mission 1 — Step 4A: read-only architecture audit and migration plan for `SqliteDynamicFormService`.
+
+The question to resolve is whether `LocalWorkspaceContext` must be migrated before or together with `SqliteDynamicFormService`, based on actual initialization and dependency flows.
+
+Expected first agent: Project Architect.
+
+No code changes are authorized during Step 4A. The report must map methods, tables, dependencies, transactions, destructive behavior, initialization, concurrency, tests, and a staged migration proposal.
+
+## Guardrails
+
+- Never use or modify the user's real SQLite database during tests.
+- Do not start implementation until the analysis is reviewed and explicitly approved.
+- No Workspace isolation changes in Mission 1.
+- No dynamic-engine redesign in the SQLite-centralization mission.
+- Preserve the exact UI rule: “Modifier” edits content only; pencil “✎” edits the full structure/template.
+- Do not claim that local uncommitted changes are visible through GitHub.

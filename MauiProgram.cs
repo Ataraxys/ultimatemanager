@@ -19,6 +19,7 @@ namespace UltimateManager
                     fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
                 });
 
+            builder.Services.AddSingleton<ISqliteDatabase, SQLiteDatabaseCoordinator>();
             builder.Services.AddSingleton<IClientService, SqliteClientService>();
             builder.Services.AddSingleton<IClientBackupService, ClientBackupService>();
             builder.Services.AddSingleton<ICompleteBackupService, CompleteBackupService>();

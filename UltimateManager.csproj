@@ -69,6 +69,16 @@
 
 	<ItemGroup>
 	  <None Include=".github\copilot-instructions.md" />
+	  <None Include="Tests\SQLiteCoordinatorHarness\SQLiteCoordinatorHarness.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Compile Remove="Tests\**\*.cs" />
+	  <None Remove="Tests\**\*" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Compile Include="Tests\SQLiteCoordinatorHarness\ClientBackupStub.cs" />
 	</ItemGroup>
 
 	<ItemGroup>
