@@ -1,29 +1,55 @@
-# AI Handoff — ChatGPT × Codex
+# AI Handoff — UltimateManager
 
-This folder is the shared, Git-backed handoff point between ChatGPT (product/architecture/QA direction) and GitHub Copilot/Codex (repository execution).
+This folder is the shared, Git-backed mailbox and state store for the UltimateManager AI workflow.
+
+## Cloud-first collaboration
+
+The intended operating mode is the GitHub-hosted Cloud AI Orchestrator:
+
+- Launch: GitHub Actions → **UltimateManager — Cloud AI Orchestrator**.
+- Executor: Codex through `openai/codex-action`, with workspace write access.
+- Reviewer: a separate Codex invocation with read-only access.
+- Communication: mission and reports committed as text files in this repository.
+- Delivery: one isolated mission branch and a draft pull request.
+- Correction loop: at most one automatic correction cycle.
+- Human control: no automatic merge, deployment, production migration, or destructive operation.
+
+Architecture and activation instructions:
+- `docs/ai-handoff/cloud-orchestration/ARCHITECTURE.md`
+- `docs/ai-handoff/cloud-orchestration/SETUP.md`
+
+The workflow requires the repository Actions secret `OPENAI_API_KEY`. OpenAI API billing is separate from ChatGPT subscription billing. Never commit secrets.
 
 ## Folders
 
-- `outbox/`: instructions and decisions written by ChatGPT for Codex.
-- `inbox/`: reports and deliverables written by Codex agents for ChatGPT.
-- `SESSION_STATE.md`: compact source of truth for current project state and next approved work.
-- `AGENT_REPORT_TEMPLATE.txt`: required structure for agent reports.
+- `outbox/`: mission briefs and decisions.
+- `outbox/runs/`: immutable mission briefs created for each cloud run.
+- `inbox/`: Codex and reviewer reports, each with a unique run ID.
+- `SESSION_STATE.md`: compact source of truth for project state and next approved work.
+- `AGENT_REPORT_TEMPLATE.txt`: required report structure for manual/fallback agent runs.
 
-## Protocol
+## Cloud protocol
 
-1. ChatGPT writes a uniquely named mission/instruction file in `outbox/`.
-2. Codex reads the latest applicable instruction from `outbox/` before acting.
-3. Codex works only within the stated scope and follows repository instructions and the selected agent role.
-4. At completion, Codex writes a plain-text report (Markdown-formatted text is acceptable) in `inbox/`. Use a unique name such as `YYYYMMDD-HHMM_MISSION-N_STEP-N_AGENT-ROLE.txt`. Never overwrite an earlier report.
-5. The agent must also include the complete report directly in its final response, not only in the file.
-6. Codex commits and pushes the handoff files to the shared branch `develop` (or the explicitly agreed branch). ChatGPT can then read the committed files through GitHub.
-7. ChatGPT reviews the report and updates `SESSION_STATE.md` and/or writes the next instruction in `outbox/`.
+1. A user with repository write access launches one workflow run and supplies the mission.
+2. The workflow creates a unique branch and persists the mission brief in `outbox/runs/`.
+3. Codex reads the mission, session state, and repository instructions; it executes only the authorized scope.
+4. The workflow saves the complete Codex final response in `inbox/`.
+5. A separate read-only reviewer inspects the branch diff and surrounding source, then saves its complete report in `inbox/`.
+6. If the reviewer requests changes, Codex receives that report and gets one bounded correction attempt, followed by a second review.
+7. The workflow opens a draft PR containing the deliverables and reports.
+8. A human reviews and merges the PR. No agent may merge or bypass protections.
 
-## Important limitations
+## Manual fallback protocol
 
-- This is Git-based synchronization, not a live shared folder. ChatGPT cannot see uncommitted local files.
-- A file becomes available to ChatGPT only after it is pushed to GitHub and the GitHub connector can read the branch.
-- Do not commit secrets, tokens, passwords, private keys, customer data, or production database contents.
-- Do not let multiple agents write the same handoff file concurrently.
-- Do not treat an agent's claimed test result as proof without checking the command output and, where appropriate, rerunning the test.
-- Never start the next implementation step merely because a report exists; wait for explicit approval in the conversation or an instruction file.
+If the cloud workflow is unavailable, ChatGPT can still write a unique brief in `outbox/` and Codex can publish a report in `inbox/` using a dedicated report branch. The agent must include the complete report in its final response as well as in the file.
+
+## Safety and evidence
+
+- Git is the shared mailbox, not a live shared filesystem.
+- Agents cannot see local uncommitted files or the user's local Android SDK/device.
+- Never commit secrets, tokens, passwords, private keys, customer data, or production database contents.
+- Do not use the user's real SQLite database for tests.
+- Distinguish facts, assumptions, and unverified claims.
+- Tests/builds must be marked PASS / FAIL / NOT TESTED with exact commands and observed evidence.
+- Never start an implementation step that has not been explicitly authorized.
+- Never merge, deploy, run production migrations, or perform destructive data operations automatically.
