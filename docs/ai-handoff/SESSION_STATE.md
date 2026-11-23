@@ -37,11 +37,20 @@ Last updated: 2026-11-23
 
 - `develop` currently does not contain `ISqliteDatabase`, `SQLiteDatabaseCoordinator`, `LocalWorkspaceContext`, or `SqliteDynamicFormService`.
 - `feature/add-personalisation` contains these files but is significantly divergent and includes broad UI, dynamic-engine, backup, test, and documentation changes.
-- Latest reviewed comparison at Step 4C review: feature branch 3 commits ahead and 12 behind `develop`; diff spans many domains.
+- Latest live comparison checked 2026-11-23: `feature/add-personalisation` is 3 commits ahead and 15 behind `develop`; GitHub reports 83 changed files, 9,121 additions and 167 deletions. `develop` is not literally empty: it contains the existing application baseline plus handoff/governance updates, but it lacks the feature branch's Steps 2/3 and dynamic-form implementation.
 - PR #3 must not be merged solely to unblock Step 4C. It requires a full integration audit first.
 - The earlier session status overstated repository-wide completion by not distinguishing branch-local work from `develop`. This correction is authoritative.
 
-### Next mission — integration audit of PR #3
+### Branch governance — corrected
+
+- `develop` is the canonical application integration branch and must represent the latest accepted application state.
+- `feature/*` branches are temporary implementation branches based on the current `develop` SHA; feature work is not globally complete until reviewed and integrated.
+- `ai-handoff/report-*` branches contain reports only and are never implementation bases.
+- Dependent missions cannot start until prerequisites are present on the approved base branch.
+- If a feature branch is materially divergent, run a read-only integration audit first; do not blindly merge, rebase, cherry-pick, or copy partial files.
+- After integration, verify the exact resulting `develop` SHA and the presence of prerequisites before issuing dependent work.
+
+## Next mission — integration audit of PR #3
 
 - Mission: `MISSION-1-INTEGRATION-AUDIT-PR3`.
 - Brief: `docs/ai-handoff/outbox/20261123_MISSION-1-INTEGRATION-AUDIT-PR3.md`.
