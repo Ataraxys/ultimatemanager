@@ -44,6 +44,7 @@ Last updated: 2026-11-23
 
 ### Step 4C — next: Workspace and DynamicForm SQLite hardening
 
+- Mission brief: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4C-IMPLEMENTATION.md`.
 - Step 4C is authorized only within the detailed scope of the Step 4B ChatGPT review.
 - Migrate `LocalWorkspaceContext` and `SqliteDynamicFormService` to `ISqliteDatabase`; remove private connections and constructor-started DDL.
 - Add centralized `PRAGMA user_version` migration runner, fail-closed behavior for unknown schemas, and transactional multi-write operations.
