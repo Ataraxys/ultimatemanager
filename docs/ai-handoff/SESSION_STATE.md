@@ -24,34 +24,35 @@ Last updated: 2026-11-23
 
 ## Mission 1 — SQLite security, migrations and backups
 
-### Completed and reviewed
+### Completed and reviewed (branch-specific)
 
 - Step 1: SQLite API/design verification completed, with journal-mode probe limitation documented.
-- Step 2 / 2B / 2C: central `ISqliteDatabase` contract and `SQLiteDatabaseCoordinator` implemented and independently reviewed. Status: VALIDÉ SOUS RÉSERVES.
-- Step 3: `SqliteClientService` migrated to `ISqliteDatabase`; CRUD/search and JSON backup triggers preserved. Harness and Android Debug build passed. Independent QA status: VALIDÉ SOUS RÉSERVES.
-- Step 4A: read-only audit completed and reviewed; findings confirmed, with template-list behavior reserved for product arbitration.
+- Steps 2 / 2B / 2C: central `ISqliteDatabase` contract and `SQLiteDatabaseCoordinator` implemented and independently reviewed on `feature/add-personalisation`; they are **not present on develop**.
+- Step 3: `SqliteClientService` migrated to `ISqliteDatabase` on `feature/add-personalisation`; harness and Android Debug build were reported as passed on that branch. The implementation is **not present on develop**.
+- Step 4A: read-only audit completed and reviewed on `feature/add-personalisation`; findings confirmed, with template-list behavior reserved for product arbitration.
 - Step 4B: read-only detailed design completed and reviewed. Status: **VALIDÉ SOUS RÉSERVES**. Review: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4B-CHATGPT-REVIEW.md`.
+- Step 4C: implementation **BLOCKED before coding** because its required base `develop` does not contain the Step 2/3 prerequisites. Codex correctly made no application changes. Review: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4C-CHATGPT-REVIEW.md`.
 
-### Accepted reservations
+### Current Git reality
 
-- JSON backup generation can race under concurrent client writes; ordering/serialization needs a dedicated design.
-- Historical-data test is not a fixture from a real prior schema.
-- Initialization uniqueness is not directly instrumented.
-- Dynamic-table initialization is not covered by end-to-end fresh-install integration tests.
-- Real backup file failures are not injected.
-- `CompleteBackupService` still has a private SQLite connection and a global destructive restore path. It is explicitly excluded from Step 4C and remains a high-priority unresolved risk.
-- Coordinator CloseAsync / ExitLock failure injection remains untested.
+- `develop` currently does not contain `ISqliteDatabase`, `SQLiteDatabaseCoordinator`, `LocalWorkspaceContext`, or `SqliteDynamicFormService`.
+- `feature/add-personalisation` contains these files but is significantly divergent and includes broad UI, dynamic-engine, backup, test, and documentation changes.
+- Latest reviewed comparison at Step 4C review: feature branch 3 commits ahead and 12 behind `develop`; diff spans many domains.
+- PR #3 must not be merged solely to unblock Step 4C. It requires a full integration audit first.
+- The earlier session status overstated repository-wide completion by not distinguishing branch-local work from `develop`. This correction is authoritative.
 
-### Step 4C — next: Workspace and DynamicForm SQLite hardening
+### Next mission — integration audit of PR #3
 
-- Mission brief: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4C-IMPLEMENTATION.md`.
-- Step 4C is authorized only within the detailed scope of the Step 4B ChatGPT review.
-- Migrate `LocalWorkspaceContext` and `SqliteDynamicFormService` to `ISqliteDatabase`; remove private connections and constructor-started DDL.
-- Add centralized `PRAGMA user_version` migration runner, fail-closed behavior for unknown schemas, and transactional multi-write operations.
-- Preserve old records and values on template mismatch or failure; no implicit destructive replacement.
-- Do not change Workspace isolation, Client schema, dynamic engine design, or UI.
-- Do not modify `CompleteBackupService`, ZIP backups, JSON import/export, or attachment restore in Step 4C.
-- Required review: complete report in Codex final response and unique `.txt` under `docs/ai-handoff/inbox/`, published on a dedicated report-only branch.
+- Mission: `MISSION-1-INTEGRATION-AUDIT-PR3`.
+- Brief: `docs/ai-handoff/outbox/20261123_MISSION-1-INTEGRATION-AUDIT-PR3.md`.
+- Scope: strictly read-only audit of PR #3 / `feature/add-personalisation` against current `develop`; inventory changes, verify SQLite and UI requirements, inspect tests, identify divergence/conflicts, and propose a safe integration plan.
+- No merge, rebase, cherry-pick, branch update, code change, or push of application code is authorized.
+- Required report: complete in Codex final response and unique `.txt` under `docs/ai-handoff/inbox/`, published on a report-only branch.
+
+### Step 4C — paused pending integration decision
+
+- Do not execute the previous Step 4C brief until the integration audit determines the correct application base and ChatGPT issues a revised brief.
+- After integration, reissue Step 4C against the accepted branch/commit, with the Step 4B architectural decisions unchanged unless explicitly revised.
 
 ### Step 4D — pending: backup and restore safety
 
@@ -60,6 +61,16 @@ Last updated: 2026-11-23
 - ZIP v1 must not be silently restored while its scope is ambiguous.
 - No Workspace restore may delete global Clients or rows belonging to another Workspace.
 - Add full archive validation, staging, failure injection, and recovery journal/marker before authorizing restore implementation.
+
+## Accepted reservations
+
+- JSON backup generation can race under concurrent client writes; ordering/serialization needs a dedicated design.
+- Historical-data test is not a fixture from a real prior schema.
+- Initialization uniqueness is not directly instrumented.
+- Dynamic-table initialization is not covered by end-to-end fresh-install integration tests.
+- Real backup file failures are not injected.
+- `CompleteBackupService` still has a private SQLite connection and a global destructive restore path on the feature branch; it remains a high-priority unresolved risk.
+- Coordinator CloseAsync / ExitLock failure injection remains untested.
 
 ## Guardrails
 
