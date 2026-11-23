@@ -1,0 +1,217 @@
+name: UltimateManager — Cloud AI Orchestrator
+
+on:
+  workflow_dispatch:
+    inputs:
+      mission:
+        description: "Mission complète à exécuter. Décrire objectif, périmètre, contraintes et critères d'acceptation."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ultimatemanager-cloud-orchestrator-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  orchestrate:
+    name: Execute, review, and open a draft PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v5
+        with:
+          ref: develop
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure Git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create isolated mission branch and persist mission brief
+        id: mission
+        env:
+          MISSION_TEXT: ${{ inputs.mission }}
+        run: |
+          set -euo pipefail
+          BRANCH="ai/mission-${GITHUB_RUN_ID}"
+          MISSION_PATH="docs/ai-handoff/outbox/runs/${GITHUB_RUN_ID}-MISSION.md"
+          mkdir -p "$(dirname "$MISSION_PATH")"
+          git switch -c "$BRANCH"
+          {
+            printf '# UltimateManager mission %s\n\n' "$GITHUB_RUN_ID"
+            printf '%s\n' "$MISSION_TEXT"
+          } > "$MISSION_PATH"
+          git add "$MISSION_PATH"
+          git commit -m "ai: record cloud mission ${GITHUB_RUN_ID}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "mission_path=$MISSION_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Publish mission branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.mission.outputs.branch }}
+        run: |
+          set -euo pipefail
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" push --set-upstream origin "$BRANCH"
+
+      - name: Run Codex implementation agent
+        id: implement
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":workspace"
+          safety-strategy: drop-sudo
+          prompt-file: .github/ai/mission-runner.md
+          output-file: docs/ai-handoff/inbox/${{ github.run_id }}-CODEX.txt
+          codex-args: '["--ephemeral"]'
+
+      - name: Commit and publish implementation and report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.mission.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git add -A
+          if git diff --cached --name-only | grep -Ei '(^|/)(\.env($|\.)|.*\.(pfx|p12|pem|key)$|.*secrets.*)$'; then
+            echo "Potential secret-bearing file detected in staged changes. Refusing to publish."
+            exit 1
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m "ai: execute mission ${GITHUB_RUN_ID}"
+          fi
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" push origin "$BRANCH"
+
+      - name: Run independent read-only reviewer
+        id: reviewer_1
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":read-only"
+          safety-strategy: drop-sudo
+          prompt-file: .github/ai/reviewer.md
+          output-file: docs/ai-handoff/inbox/${{ github.run_id }}-REVIEW-1.txt
+          codex-args: '["--ephemeral"]'
+
+      - name: Commit and publish first review report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.mission.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git add "docs/ai-handoff/inbox/${GITHUB_RUN_ID}-REVIEW-1.txt"
+          if ! git diff --cached --quiet; then
+            git commit -m "ai: add independent review for mission ${GITHUB_RUN_ID}"
+          fi
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" push origin "$BRANCH"
+
+      - name: Decide whether one correction cycle is allowed
+        id: review_gate
+        env:
+          REVIEW: ${{ steps.reviewer_1.outputs.final-message }}
+        run: |
+          if printf '%s' "$REVIEW" | grep -q '^DECISION: REQUEST_CHANGES'; then
+            echo "needs_fix=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_fix=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run one bounded Codex correction cycle
+        id: revise
+        if: steps.review_gate.outputs.needs_fix == 'true'
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":workspace"
+          safety-strategy: drop-sudo
+          output-file: docs/ai-handoff/inbox/${{ github.run_id }}-CODEX-REVISION.txt
+          codex-args: '["--ephemeral"]'
+          prompt: |
+            You are the implementation agent for UltimateManager. Read the mission brief and the independent review report:
+            docs/ai-handoff/inbox/${{ github.run_id }}-REVIEW-1.txt
+
+            Address only the concrete findings marked as required corrections. Preserve the original mission scope.
+            Do not modify reviewer reports, do not commit or push, and do not merge.
+            Run the relevant checks where possible. Do not claim unrun tests passed.
+            Your final response must be a complete Markdown report with status, findings addressed, files changed, tests/build results (PASS/FAIL/NOT TESTED), remaining risks, and next recommendation.
+            The workflow will save your complete final response to docs/ai-handoff/inbox/${{ github.run_id }}-CODEX-REVISION.txt.
+
+      - name: Commit and publish correction
+        if: steps.review_gate.outputs.needs_fix == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.mission.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git add -A
+          if git diff --cached --name-only | grep -Ei '(^|/)(\.env($|\.)|.*\.(pfx|p12|pem|key)$|.*secrets.*)$'; then
+            echo "Potential secret-bearing file detected in staged changes. Refusing to publish."
+            exit 1
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m "ai: address review findings for mission ${GITHUB_RUN_ID}"
+          fi
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" push origin "$BRANCH"
+
+      - name: Run final independent review
+        id: reviewer_2
+        if: steps.review_gate.outputs.needs_fix == 'true'
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":read-only"
+          safety-strategy: drop-sudo
+          prompt-file: .github/ai/reviewer.md
+          output-file: docs/ai-handoff/inbox/${{ github.run_id }}-REVIEW-2.txt
+          codex-args: '["--ephemeral"]'
+
+      - name: Commit and publish final review report
+        if: steps.review_gate.outputs.needs_fix == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.mission.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git add "docs/ai-handoff/inbox/${GITHUB_RUN_ID}-REVIEW-2.txt"
+          if ! git diff --cached --quiet; then
+            git commit -m "ai: add final independent review for mission ${GITHUB_RUN_ID}"
+          fi
+          AUTH="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $AUTH" push origin "$BRANCH"
+
+      - name: Open draft pull request for human approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.mission.outputs.branch }}
+          REVIEW_1: ${{ steps.reviewer_1.outputs.final-message }}
+          REVIEW_2: ${{ steps.reviewer_2.outputs.final-message }}
+          MISSION_PATH: ${{ steps.mission.outputs.mission_path }}
+        run: |
+          set -euo pipefail
+          FINAL_REVIEW="$REVIEW_1"
+          if [ -n "$REVIEW_2" ]; then FINAL_REVIEW="$REVIEW_2"; fi
+          {
+            printf '## Mission\n\n'
+            printf 'Mission brief: `%s`\n\n' "$MISSION_PATH"
+            printf '## Agent reports\n\n'
+            printf -- '- Codex: `docs/ai-handoff/inbox/%s-CODEX.txt`\n' "$GITHUB_RUN_ID"
+            printf -- '- Reviewer 1: `docs/ai-handoff/inbox/%s-REVIEW-1.txt`\n' "$GITHUB_RUN_ID"
+            if [ -n "$REVIEW_2" ]; then
+              printf -- '- Codex correction: `docs/ai-handoff/inbox/%s-CODEX-REVISION.txt`\n' "$GITHUB_RUN_ID"
+              printf -- '- Final reviewer: `docs/ai-handoff/inbox/%s-REVIEW-2.txt`\n' "$GITHUB_RUN_ID"
+            fi
+            printf '\n## Final independent review\n\n%s\n' "$FINAL_REVIEW"
+            printf '\n---\nCreated by the UltimateManager Cloud AI Orchestrator. This PR is always draft; no automatic merge is permitted.\n'
+          } > "$RUNNER_TEMP/pr-body.md"
+          gh pr create --draft --base develop --head "$BRANCH" --title "AI mission #${GITHUB_RUN_ID}" --body-file "$RUNNER_TEMP/pr-body.md"
