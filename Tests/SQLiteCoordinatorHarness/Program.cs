@@ -1,5 +1,6 @@
 using SQLitePCL;
 using UltimateManager.Models;
+using UltimateManager.Models.DynamicForms;
 using UltimateManager.Services;
 
 raw.SetProvider(new SQLite3Provider_e_sqlite3());
@@ -33,7 +34,8 @@ var tests = new (string Name, Func<Task> Test)[]
     ("25_CLIENT_REUSE_AFTER_EXCEPTION", TestClientReuseAfterExceptionAsync),
     ("26_CLIENT_NO_INDEPENDENT_CONNECTION", TestClientNoIndependentConnectionAsync),
     ("27_CLIENT_BACKUP_REGENERATION", TestClientBackupRegenerationAsync),
-    ("28_CLIENT_HISTORICAL_DATA", TestClientHistoricalDataAsync)
+    ("28_CLIENT_HISTORICAL_DATA", TestClientHistoricalDataAsync),
+    ("29_DYNAMIC_FIELD_BATCH_ROLLBACK", TestDynamicFieldBatchRollbackAsync)
 };
 
 var failed = 0;
@@ -508,6 +510,47 @@ static async Task TestClientHistoricalDataAsync()
     }
 }
 
+static async Task TestDynamicFieldBatchRollbackAsync()
+{
+    var root = CreateTemporaryDirectory();
+    var previousAppDataDirectory = FileSystem.AppDataDirectory;
+    SqliteDynamicFormService? service = null;
+    try
+    {
+        FileSystem.AppDataDirectory = root;
+        service = new SqliteDynamicFormService(new WorkspaceContextStub(Guid.NewGuid()));
+        var template = await service.CreateTemplateAsync("Test client");
+        var block = await service.AddBlockAsync(template.Template.Id, "Coordonnées");
+        var field = await service.AddFieldAsync(block.Id, "Téléphone", FieldType.ShortText);
+        var record = await service.CreateRecordAsync(template.Template.Id);
+        await service.SaveFieldValueAsync(record.Record.Id, field.Id, "\"avant\"");
+
+        await AssertThrowsAsync<InvalidOperationException>(() => service.SaveFieldValuesAsync(
+            record.Record.Id,
+            new Dictionary<Guid, string>
+            {
+                [field.Id] = "\"après\"",
+                [Guid.NewGuid()] = "\"champ absent\""
+            }));
+
+        var reloaded = await service.GetRecordAsync(record.Record.Id)
+            ?? throw new InvalidOperationException("Le record de test n’a pas pu être rechargé.");
+        var savedValue = reloaded.Blocks.SelectMany(item => item.Values)
+            .Single(item => item.FieldDefinitionId == field.Id);
+        Assert(savedValue.ValueJson == "\"avant\"", "Le rollback n'a pas conservé la valeur antérieure.");
+    }
+    finally
+    {
+        if (service is not null)
+        {
+            await service.DisposeAsync();
+        }
+
+        FileSystem.AppDataDirectory = previousAppDataDirectory;
+        DeleteTemporaryDirectory(root);
+    }
+}
+
 static async Task WithClientServiceAsync(Func<string, SqliteClientService, ClientBackupStub, Task> test)
 {
     var root = CreateTemporaryDirectory();
@@ -602,4 +645,11 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+sealed class WorkspaceContextStub(Guid workspaceId) : IWorkspaceContext
+{
+    public Guid WorkspaceId { get; } = workspaceId;
+
+    public Task EnsureInitializedAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 }

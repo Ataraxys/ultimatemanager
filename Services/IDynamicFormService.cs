@@ -42,6 +42,8 @@ public interface IDynamicFormService
 
     Task SaveFieldValueAsync(Guid recordId, Guid fieldDefinitionId, string valueJson, CancellationToken cancellationToken = default);
 
+    Task SaveFieldValuesAsync(Guid recordId, IReadOnlyDictionary<Guid, string> values, CancellationToken cancellationToken = default);
+
     Task<EntityRecordModel> CreateRecordAsync(Guid templateId, CancellationToken cancellationToken = default);
 
     Task<EntityRecordModel> GetOrCreateRecordAsync(Guid externalEntityId, Guid templateId, CancellationToken cancellationToken = default);

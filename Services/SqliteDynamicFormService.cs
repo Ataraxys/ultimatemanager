@@ -3,7 +3,7 @@ using UltimateManager.Models.DynamicForms;
 
 namespace UltimateManager.Services;
 
-public sealed class SqliteDynamicFormService : IDynamicFormService
+public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDisposable
 {
     private readonly SQLiteAsyncConnection _connection;
     private readonly IWorkspaceContext _workspaceContext;
@@ -15,6 +15,8 @@ public sealed class SqliteDynamicFormService : IDynamicFormService
         _connection = new SQLiteAsyncConnection(Path.Combine(FileSystem.AppDataDirectory, "ultimate-manager.db3"));
         _initializationTask = InitializeAsync();
     }
+
+    public ValueTask DisposeAsync() => new(_connection.CloseAsync());
 
     public async Task<IReadOnlyList<TemplateDefinition>> GetTemplatesAsync(CancellationToken cancellationToken = default)
     {
@@ -406,37 +408,64 @@ public sealed class SqliteDynamicFormService : IDynamicFormService
         string valueJson,
         CancellationToken cancellationToken = default)
     {
+        await SaveFieldValuesAsync(recordId, new Dictionary<Guid, string> { [fieldDefinitionId] = valueJson }, cancellationToken);
+    }
+
+    public async Task SaveFieldValuesAsync(
+        Guid recordId,
+        IReadOnlyDictionary<Guid, string> values,
+        CancellationToken cancellationToken = default)
+    {
         await EnsureInitializedAsync(cancellationToken);
-        var record = await _connection.FindAsync<EntityRecord>(recordId);
-        var field = await GetFieldInWorkspaceAsync(fieldDefinitionId, cancellationToken);
-        if (record is null || record.WorkspaceId != _workspaceContext.WorkspaceId || field is null)
+        cancellationToken.ThrowIfCancellationRequested();
+        if (values.Count == 0)
         {
-            throw new InvalidOperationException("La fiche ou le champ demandé n’existe pas dans cet espace de travail.");
+            return;
         }
 
-        var value = await _connection.Table<FieldValue>()
-            .Where(item => item.EntityRecordId == recordId && item.FieldDefinitionId == fieldDefinitionId)
-            .FirstOrDefaultAsync();
-        if (value is null)
+        await _connection.RunInTransactionAsync(connection =>
         {
-            await _connection.InsertAsync(new FieldValue
+            var record = connection.Find<EntityRecord>(recordId);
+            if (record is null || record.WorkspaceId != _workspaceContext.WorkspaceId)
             {
-                Id = Guid.NewGuid(),
-                EntityRecordId = recordId,
-                FieldDefinitionId = fieldDefinitionId,
-                ValueJson = valueJson,
-                UpdatedAt = DateTime.UtcNow
-            });
-        }
-        else
-        {
-            value.ValueJson = valueJson;
-            value.UpdatedAt = DateTime.UtcNow;
-            await _connection.UpdateAsync(value);
-        }
+                throw new InvalidOperationException("La fiche demandée n’existe pas dans cet espace de travail.");
+            }
 
-        record.UpdatedAt = DateTime.UtcNow;
-        await _connection.UpdateAsync(record);
+            foreach (var (fieldDefinitionId, valueJson) in values)
+            {
+                var field = connection.Find<FieldDefinition>(fieldDefinitionId);
+                var block = field is null ? null : connection.Find<BlockDefinition>(field.BlockDefinitionId);
+                var template = block is null ? null : connection.Find<EntityTemplate>(block.TemplateId);
+                if (template is null || template.WorkspaceId != _workspaceContext.WorkspaceId || template.Id != record.TemplateId)
+                {
+                    throw new InvalidOperationException("La fiche ou le champ demandé n’existe pas dans cet espace de travail.");
+                }
+
+                var value = connection.Table<FieldValue>()
+                    .Where(item => item.EntityRecordId == recordId && item.FieldDefinitionId == fieldDefinitionId)
+                    .FirstOrDefault();
+                if (value is null)
+                {
+                    connection.Insert(new FieldValue
+                    {
+                        Id = Guid.NewGuid(),
+                        EntityRecordId = recordId,
+                        FieldDefinitionId = fieldDefinitionId,
+                        ValueJson = valueJson,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+                else
+                {
+                    value.ValueJson = valueJson;
+                    value.UpdatedAt = DateTime.UtcNow;
+                    connection.Update(value);
+                }
+            }
+
+            record.UpdatedAt = DateTime.UtcNow;
+            connection.Update(record);
+        });
     }
 
     public async Task<EntityRecordModel> CreateRecordAsync(Guid templateId, CancellationToken cancellationToken = default)

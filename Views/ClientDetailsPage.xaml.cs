@@ -8,6 +8,7 @@ public partial class ClientDetailsPage : ContentPage, IQueryAttributable
 {
     private readonly ClientDetailsViewModel _viewModel;
     private Guid _clientId;
+    private bool _reloadOnAppearing;
 
     public ClientDetailsPage()
     {
@@ -23,6 +24,7 @@ public partial class ClientDetailsPage : ContentPage, IQueryAttributable
             return;
         }
 
+        _reloadOnAppearing = true;
         await Shell.Current.GoToAsync($"ClientEditPage?id={_clientId}&mode=content");
     }
 
@@ -37,23 +39,20 @@ public partial class ClientDetailsPage : ContentPage, IQueryAttributable
 
     private Task LoadAsync() => _viewModel.LoadAsync(_clientId);
 
+    protected override async void OnAppearing()
+    {
+        base.OnAppearing();
+        if (_reloadOnAppearing && _clientId != Guid.Empty)
+        {
+            _reloadOnAppearing = false;
+            await LoadAsync();
+        }
+    }
+
     private async void OnEditClicked(object? sender, EventArgs e)
     {
-        try
-        {
-            var templateId = await _viewModel.GetTemplateIdAsync();
-            if (templateId == Guid.Empty)
-            {
-                await DisplayAlertAsync("Édition impossible", "Le template de cette fiche n’est pas disponible.", "OK");
-                return;
-            }
-
-            await Shell.Current.GoToAsync($"TemplateEditorPage?id={templateId}&clientId={_clientId}&mode=structure");
-        }
-        catch (Exception exception)
-        {
-            await DisplayAlertAsync("Édition impossible", exception.Message, "OK");
-        }
+        _reloadOnAppearing = true;
+        await Shell.Current.GoToAsync($"ClientEditPage?id={_clientId}&mode=structure");
     }
 
     private async void OnCancelEditClicked(object? sender, EventArgs e)

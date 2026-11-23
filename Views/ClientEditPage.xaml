@@ -41,25 +41,32 @@
             </VerticalStackLayout>
 
             <Label Text="Blocs et objets" Style="{StaticResource SectionTitle}" />
+            <Button Text="+ Ajouter un bloc"
+                    Clicked="OnAddBlockClicked"
+                    HorizontalOptions="Start"
+                    IsVisible="{Binding IsStructureEditing}" />
             <VerticalStackLayout BindableLayout.ItemsSource="{Binding EditableDynamicBlocks}" Spacing="12">
                 <BindableLayout.ItemTemplate>
                     <DataTemplate x:DataType="viewModels:DynamicRecordBlockItem">
                         <Border Padding="14" Stroke="{StaticResource Gray200}" StrokeShape="RoundRectangle 16">
                             <VerticalStackLayout Spacing="8">
-                                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                 <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="4">
                                     <Entry Text="{Binding Name}" Placeholder="Nom du bloc" FontAttributes="Bold" IsReadOnly="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing, Converter={StaticResource InverseBooleanConverter}}" />
-                                    <Button Grid.Column="1" Text="Suppr. bloc" Clicked="OnDeleteBlockClicked" Padding="8,0" TextColor="#C62828" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                    <Button Grid.Column="1" Text="↑" Clicked="OnMoveBlockUpClicked" Padding="6,0" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                    <Button Grid.Column="2" Text="↓" Clicked="OnMoveBlockDownClicked" Padding="6,0" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                    <Button Grid.Column="3" Text="+ Objet" Clicked="OnAddFieldClicked" Padding="6,0" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                    <Button Grid.Column="4" Text="Suppr." Clicked="OnDeleteBlockClicked" Padding="6,0" TextColor="#C62828" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
                                 </Grid>
-                                 <Button Text="+ Ajouter un objet" Clicked="OnAddFieldClicked" HorizontalOptions="Start" Padding="10,4" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
                                 <VerticalStackLayout BindableLayout.ItemsSource="{Binding Fields}" Spacing="8">
                                     <BindableLayout.ItemTemplate>
                                         <DataTemplate x:DataType="viewModels:DynamicRecordFieldItem">
                                             <VerticalStackLayout Spacing="4">
                                                 <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="4">
-                                                     <Label Text="{Binding Label}" FontSize="13" TextColor="{StaticResource Gray500}" />
-                                                     <Label Grid.Column="1" Text="" />
-                                                     <Label Grid.Column="2" Text="" />
-                                                     <Label Grid.Column="3" Text="" />
+                                                     <Label Text="{Binding Label}" FontSize="13" TextColor="{StaticResource Gray500}" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                     <Entry Text="{Binding Label}" Placeholder="Nom du champ" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                                     <Button Grid.Column="1" Text="↑" Clicked="OnMoveFieldUpClicked" Padding="6,0" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                                     <Button Grid.Column="2" Text="↓" Clicked="OnMoveFieldDownClicked" Padding="6,0" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                                     <Button Grid.Column="3" Text="Suppr." Clicked="OnDeleteFieldClicked" Padding="6,0" TextColor="#C62828" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
                                                 </Grid>
                                                 <Entry Text="{Binding Value}" IsVisible="{Binding IsSimple}" Placeholder="Saisir une valeur" />
                                                 <Editor Text="{Binding Value}" IsVisible="{Binding IsLongText}" AutoSize="TextChanges" MinimumHeightRequest="90" />
@@ -114,7 +121,13 @@
                 <Button Text="Annuler"
                         Clicked="OnCancelClicked"
                         BackgroundColor="{StaticResource Gray200}"
-                        TextColor="{StaticResource Gray900}" />
+                        TextColor="{StaticResource Gray900}"
+                        IsVisible="{Binding IsStructureEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                <Button Text="Retour"
+                        Clicked="OnCancelClicked"
+                        BackgroundColor="{StaticResource Gray200}"
+                        TextColor="{StaticResource Gray900}"
+                        IsVisible="{Binding IsStructureEditing}" />
                 <Button Grid.Column="1"
                         Text="Enregistrer"
                         Clicked="OnSaveClicked"

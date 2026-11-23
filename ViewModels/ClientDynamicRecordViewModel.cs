@@ -103,7 +103,7 @@ public sealed class ClientDynamicRecordViewModel(
         OnPropertyChanged(nameof(IsBusy));
         try
         {
-            var hasChanges = false;
+            var pendingValues = new Dictionary<Guid, string>();
             foreach (var field in Blocks.SelectMany(block => block.Fields))
             {
                 var serializedValue = field.SerializeValue();
@@ -113,17 +113,17 @@ public sealed class ClientDynamicRecordViewModel(
                     continue;
                 }
 
-                await _formService.SaveFieldValueAsync(
-                    _recordId,
-                    field.Id,
-                    serializedValue,
-                    cancellationToken);
-                _initialFieldValues[field.Id] = serializedValue;
-                hasChanges = true;
+                pendingValues[field.Id] = serializedValue;
             }
 
-            if (hasChanges)
+            if (pendingValues.Count > 0)
             {
+                await _formService.SaveFieldValuesAsync(_recordId, pendingValues, cancellationToken);
+                foreach (var (fieldId, value) in pendingValues)
+                {
+                    _initialFieldValues[fieldId] = value;
+                }
+
                 await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
             }
 
@@ -195,6 +195,22 @@ public sealed class ClientDynamicRecordViewModel(
         Blocks.Add(item);
         await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
         return item;
+    }
+
+    public async Task MoveBlockAsync(
+        DynamicRecordBlockItem block,
+        int offset,
+        CancellationToken cancellationToken = default)
+    {
+        await _formService.MoveBlockAsync(_templateId, block.BlockDefinitionId, offset, cancellationToken);
+        var index = Blocks.IndexOf(block);
+        var target = Math.Clamp(index + offset, 0, Blocks.Count - 1);
+        if (index >= 0 && index != target)
+        {
+            Blocks.Move(index, target);
+        }
+
+        await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
     }
 
     public async Task DeleteBlockAsync(

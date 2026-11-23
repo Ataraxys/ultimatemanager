@@ -23,12 +23,13 @@ public partial class ClientEditViewModel(
     private bool _isExistingClient;
     private Guid _workingTemplateId;
     private bool _templateSelectionLoaded;
+    private bool _structureEditing;
 
     public bool IsEditing => _isExistingClient;
 
     public bool IsNewClient => !_isExistingClient;
 
-    public bool IsStructureEditing => false;
+    public bool IsStructureEditing => !_isExistingClient || _structureEditing;
 
     public bool IsTemplateSelectionLoaded => _templateSelectionLoaded;
 
@@ -111,9 +112,10 @@ public partial class ClientEditViewModel(
     [ObservableProperty]
     private bool isBusy;
 
-    public void Load(Client? client)
+    public void Load(Client? client, bool structureEditing = false)
     {
         _isExistingClient = client is not null;
+        _structureEditing = structureEditing;
         _clientId = client?.Id ?? Guid.NewGuid();
         _createdAt = client?.CreatedAt ?? DateTime.UtcNow;
         _workingTemplateId = Guid.Empty;
@@ -226,6 +228,9 @@ public partial class ClientEditViewModel(
     public Task MoveFieldAsync(DynamicRecordBlockItem block, DynamicRecordFieldItem field, int offset, CancellationToken cancellationToken = default) =>
         _dynamicRecordViewModel.MoveFieldAsync(block, field, offset, cancellationToken);
 
+    public Task MoveBlockAsync(DynamicRecordBlockItem block, int offset, CancellationToken cancellationToken = default) =>
+        _dynamicRecordViewModel.MoveBlockAsync(block, offset, cancellationToken);
+
     public DynamicRecordBlockItem? FindBlock(DynamicRecordFieldItem field) =>
         EditableDynamicBlocks.FirstOrDefault(block => block.Fields.Contains(field));
 
@@ -238,6 +243,21 @@ public partial class ClientEditViewModel(
     public async Task<bool> SaveDynamicAsync(CancellationToken cancellationToken = default)
     {
         return await _dynamicRecordViewModel.SaveAsync(cancellationToken);
+    }
+
+    public Task SaveStructureAsync(CancellationToken cancellationToken = default) =>
+        IsStructureEditing ? _dynamicRecordViewModel.SaveTemplateChangesAsync(cancellationToken) : Task.CompletedTask;
+
+    public bool ValidateForSave()
+    {
+        FirstName = FirstName.Trim();
+        LastName = LastName.Trim();
+        ValidateAllProperties();
+        OnPropertyChanged(nameof(FirstNameError));
+        OnPropertyChanged(nameof(LastNameError));
+        return !HasErrors &&
+               TryParseCoordinate(Latitude, out _) &&
+               TryParseCoordinate(Longitude, out _);
     }
 
     [RelayCommand]
@@ -279,17 +299,8 @@ public partial class ClientEditViewModel(
     [RelayCommand]
     public async Task<bool> SaveAsync()
     {
-        FirstName = FirstName.Trim();
-        LastName = LastName.Trim();
-        ValidateAllProperties();
-        OnPropertyChanged(nameof(FirstNameError));
-        OnPropertyChanged(nameof(LastNameError));
-        if (HasErrors || IsBusy)
-        {
-            return false;
-        }
-
-        if (!TryParseCoordinate(Latitude, out var latitudeValue) ||
+        if (!ValidateForSave() || IsBusy ||
+            !TryParseCoordinate(Latitude, out var latitudeValue) ||
             !TryParseCoordinate(Longitude, out var longitudeValue))
         {
             return false;

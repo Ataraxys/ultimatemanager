@@ -34,8 +34,9 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
             return;
         }
 
-        if (query.TryGetValue("mode", out var mode) &&
-            !string.Equals(mode?.ToString(), "content", StringComparison.OrdinalIgnoreCase))
+        var modeValue = query.TryGetValue("mode", out var mode) ? mode?.ToString() : "content";
+        var structureEditing = string.Equals(modeValue, "structure", StringComparison.OrdinalIgnoreCase);
+        if (!structureEditing && !string.Equals(modeValue, "content", StringComparison.OrdinalIgnoreCase))
         {
             await Shell.Current.GoToAsync("..");
             return;
@@ -43,7 +44,7 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
 
         var clientService = App.Services.GetRequiredService<Services.IClientService>();
         var client = await clientService.GetByIdAsync(id);
-        _viewModel.Load(client);
+        _viewModel.Load(client, structureEditing);
         await _viewModel.LoadTemplateSelectionAsync(id);
     }
 
@@ -73,6 +74,18 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
         }
 
         await _viewModel.DeleteBlockAsync(block);
+    }
+
+    private async void OnMoveBlockUpClicked(object? sender, EventArgs e) => await MoveBlockAsync(sender, -1);
+
+    private async void OnMoveBlockDownClicked(object? sender, EventArgs e) => await MoveBlockAsync(sender, 1);
+
+    private async Task MoveBlockAsync(object? sender, int offset)
+    {
+        if (sender is Button { BindingContext: DynamicRecordBlockItem block })
+        {
+            await _viewModel.MoveBlockAsync(block, offset);
+        }
     }
 
     private async void OnAddFieldClicked(object? sender, EventArgs e)
@@ -186,9 +199,27 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
     private async void OnSaveClicked(object? sender, EventArgs e)
     {
         var isNewClient = !_viewModel.IsEditing;
-        if (await _viewModel.SaveAsync())
+        try
         {
-            await _viewModel.SaveDynamicAsync();
+            if (!_viewModel.ValidateForSave())
+            {
+                await DisplayAlertAsync("Vérifier les champs", "Vérifiez le prénom et les coordonnées avant d’enregistrer.", "OK");
+                return;
+            }
+
+            await _viewModel.SaveStructureAsync();
+            if (!await _viewModel.SaveDynamicAsync())
+            {
+                await DisplayAlertAsync("Enregistrement impossible", "Les valeurs de la fiche n’ont pas pu être enregistrées.", "OK");
+                return;
+            }
+
+            if (!await _viewModel.SaveAsync())
+            {
+                await DisplayAlertAsync("Vérifier les champs", "Vérifiez le prénom et les coordonnées avant d’enregistrer.", "OK");
+                return;
+            }
+
             var dynamicFormService = App.Services.GetRequiredService<Services.IDynamicFormService>();
             var templateId = _viewModel.SelectedTemplateId;
             await dynamicFormService.EnsureClientTemplateAsync(_viewModel.ClientId, templateId);
@@ -202,14 +233,25 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
                     "Compris");
             }
 
-            await Shell.Current.GoToAsync(isNewClient
-                ? $"../ClientDetailsPage?id={_viewModel.ClientId}"
-                : "..");
+            await Shell.Current.GoToAsync(isNewClient ? $"../ClientDetailsPage?id={_viewModel.ClientId}" : "..");
+        }
+        catch (Exception exception)
+        {
+            await DisplayAlertAsync("Enregistrement impossible", exception.Message, "OK");
         }
     }
 
     private async void OnCancelClicked(object? sender, EventArgs e)
     {
+        if (_viewModel.IsStructureEditing && !await DisplayAlertAsync(
+                "Quitter l’édition de structure",
+                "Les changements de blocs et de champs sont appliqués au fur et à mesure. Les valeurs non enregistrées seront abandonnées. Continuer ?",
+                "Quitter",
+                "Rester"))
+        {
+            return;
+        }
+
         await Shell.Current.GoToAsync("..");
     }
 
