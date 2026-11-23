@@ -80,3 +80,10 @@ The OpenAI API is billed separately from a ChatGPT subscription. A ChatGPT Go/Pl
 - If review returns BLOCKED or malformed output, no correction is attempted; the report remains on the mission branch and the workflow should be treated as failed/needs investigation.
 - If one correction cycle still receives REQUEST_CHANGES, a draft PR is opened with the unresolved findings visible. It must not be merged.
 - A failed publish or PR creation is a workflow failure; inspect the GitHub Actions logs and branch state before retrying.
+
+
+## Clarification for the initial workflow version
+
+The current workflow opens a draft PR after the reviewer invocation completes, even if the reviewer reports `BLOCKED` or produces a malformed decision line. In that case it does not attempt a correction; the draft PR and report are diagnostic only and must not be merged until a human resolves the blocker. This is deliberately fail-closed at the merge boundary because all PRs remain drafts and no merge action exists in the workflow.
+
+If a GitHub Actions run fails, start a **new workflow run** rather than using GitHub's rerun button: the initial implementation uses the run ID for branch uniqueness, and a rerun of the same run can collide with the existing mission branch.
