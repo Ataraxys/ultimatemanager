@@ -40,15 +40,23 @@ Last updated: 2026-11-23
 - `SqliteDynamicFormService`, `LocalWorkspaceContext`, and `CompleteBackupService` still have independent SQLite connections; global centralization is not complete.
 - Coordinator CloseAsync / ExitLock failure injection remains untested.
 
+## Step 4A — completed and reviewed
+
+- Codex completed the read-only architecture audit of `SqliteDynamicFormService` and `LocalWorkspaceContext`.
+- ChatGPT retrieved the report from `ai-handoff/report-MISSION-1-STEP-4A`, independently checked the relevant source files on `feature/add-personalisation`, and recorded the decision **VALIDÉ SOUS RÉSERVES**.
+- Independent review confirmed the separate SQLite connections, constructor-started initialization, non-transactional multi-write operations, destructive ordering in `GetOrCreateRecordAsync`, broad swallowed migration exceptions, global destructive restore statements in `CompleteBackupService`, and orphaned field values after definition deletion.
+- Review record: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4A-CHATGPT-REVIEW.md`.
+- No implementation is authorized by this review.
+
 ## Current next step
 
-Mission 1 — Step 4A: read-only architecture audit and migration plan for `SqliteDynamicFormService`.
+Mission 1 — Step 4B: read-only detailed design of the SQLite migration and hardening plan.
 
-The question to resolve is whether `LocalWorkspaceContext` must be migrated before or together with `SqliteDynamicFormService`, based on actual initialization and dependency flows.
-
-Expected first agent: Project Architect.
-
-No code changes are authorized during Step 4A. The report must map methods, tables, dependencies, transactions, destructive behavior, initialization, concurrency, tests, and a staged migration proposal.
+- Mission brief: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4B-IMPLEMENTATION-DESIGN.md`.
+- Dependency Step 4A review is satisfied by the explicit ChatGPT review record above.
+- Scope: target architecture, migration sequencing for `LocalWorkspaceContext`, `SqliteDynamicFormService`, and `CompleteBackupService`; versioned schema migrations; atomicity; backup/restore safety; and test design.
+- No code changes, database migrations, or real user database access are authorized during Step 4B.
+- Implementation requires a separate explicit approval after Step 4B is reviewed.
 
 ## Guardrails
 
