@@ -52,3 +52,6 @@ Close the smoke-test PR after reviewing it if it contains no useful documentatio
 ## 6. Launch real missions
 
 Use the workflow's mission input to provide the complete objective, exact scope, constraints, and acceptance criteria. For risky work (database migrations, data deletion, security changes, release/deployment), explicitly require design/review first and human approval before implementation or production execution.
+
+
+If a run fails after creating its mission branch, start a fresh workflow run rather than using **Re-run jobs**. The initial branch naming scheme is based on the workflow run ID; a new run receives a new ID.
