@@ -29,6 +29,8 @@ Last updated: 2026-11-23
 - Step 1: SQLite API/design verification completed, with journal-mode probe limitation documented.
 - Step 2 / 2B / 2C: central `ISqliteDatabase` contract and `SQLiteDatabaseCoordinator` implemented and independently reviewed. Status: VALIDÉ SOUS RÉSERVES.
 - Step 3: `SqliteClientService` migrated to `ISqliteDatabase`; CRUD/search and JSON backup triggers preserved. Harness and Android Debug build passed. Independent QA status: VALIDÉ SOUS RÉSERVES.
+- Step 4A: read-only audit completed and reviewed; findings confirmed, with template-list behavior reserved for product arbitration.
+- Step 4B: read-only detailed design completed and reviewed. Status: **VALIDÉ SOUS RÉSERVES**. Review: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4B-CHATGPT-REVIEW.md`.
 
 ### Accepted reservations
 
@@ -37,32 +39,33 @@ Last updated: 2026-11-23
 - Initialization uniqueness is not directly instrumented.
 - Dynamic-table initialization is not covered by end-to-end fresh-install integration tests.
 - Real backup file failures are not injected.
-- `SqliteDynamicFormService`, `LocalWorkspaceContext`, and `CompleteBackupService` still have independent SQLite connections; global centralization is not complete.
+- `CompleteBackupService` still has a private SQLite connection and a global destructive restore path. It is explicitly excluded from Step 4C and remains a high-priority unresolved risk.
 - Coordinator CloseAsync / ExitLock failure injection remains untested.
 
-## Step 4A — completed and reviewed
+### Step 4C — next: Workspace and DynamicForm SQLite hardening
 
-- Codex completed the read-only architecture audit of `SqliteDynamicFormService` and `LocalWorkspaceContext`.
-- ChatGPT retrieved the report from `ai-handoff/report-MISSION-1-STEP-4A`, independently checked the relevant source files on `feature/add-personalisation`, and recorded the decision **VALIDÉ SOUS RÉSERVES**.
-- Independent review confirmed the separate SQLite connections, constructor-started initialization, non-transactional multi-write operations, destructive ordering in `GetOrCreateRecordAsync`, broad swallowed migration exceptions, global destructive restore statements in `CompleteBackupService`, and orphaned field values after definition deletion.
-- Review record: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4A-CHATGPT-REVIEW.md`.
-- No implementation is authorized by this review.
+- Step 4C is authorized only within the detailed scope of the Step 4B ChatGPT review.
+- Migrate `LocalWorkspaceContext` and `SqliteDynamicFormService` to `ISqliteDatabase`; remove private connections and constructor-started DDL.
+- Add centralized `PRAGMA user_version` migration runner, fail-closed behavior for unknown schemas, and transactional multi-write operations.
+- Preserve old records and values on template mismatch or failure; no implicit destructive replacement.
+- Do not change Workspace isolation, Client schema, dynamic engine design, or UI.
+- Do not modify `CompleteBackupService`, ZIP backups, JSON import/export, or attachment restore in Step 4C.
+- Required review: complete report in Codex final response and unique `.txt` under `docs/ai-handoff/inbox/`, published on a dedicated report-only branch.
 
-## Current next step
+### Step 4D — pending: backup and restore safety
 
-Mission 1 — Step 4B: read-only detailed design of the SQLite migration and hardening plan.
-
-- Mission brief: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4B-IMPLEMENTATION-DESIGN.md`.
-- Dependency Step 4A review is satisfied by the explicit ChatGPT review record above.
-- Scope: target architecture, migration sequencing for `LocalWorkspaceContext`, `SqliteDynamicFormService`, and `CompleteBackupService`; versioned schema migrations; atomicity; backup/restore safety; and test design.
-- No code changes, database migrations, or real user database access are authorized during Step 4B.
-- Implementation requires a separate explicit approval after Step 4B is reviewed.
+- Separate mission after Step 4C review.
+- Must decide and implement explicit Workspace vs full-application archive scopes.
+- ZIP v1 must not be silently restored while its scope is ambiguous.
+- No Workspace restore may delete global Clients or rows belonging to another Workspace.
+- Add full archive validation, staging, failure injection, and recovery journal/marker before authorizing restore implementation.
 
 ## Guardrails
 
 - Never use or modify the user's real SQLite database during tests.
-- Do not start implementation until the analysis is reviewed and explicitly approved.
+- No destructive migration or restore without explicit approved policy.
 - No Workspace isolation changes in Mission 1.
 - No dynamic-engine redesign in the SQLite-centralization mission.
 - Preserve the exact UI rule: “Modifier” edits content only; pencil “✎” edits the full structure/template.
 - Do not claim that local uncommitted changes are visible through GitHub.
+- Cloud orchestration PR #4 is parked; continue the normal manual `@execute` / `@review` workflow.
