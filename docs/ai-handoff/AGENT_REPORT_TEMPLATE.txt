@@ -1,0 +1,59 @@
+RAPPORT AGENT — [MISSION / ÉTAPE]
+
+1. STATUT
+- Statut :
+- Décision éventuelle :
+- Résumé :
+
+2. PÉRIMÈTRE
+- Objectif :
+- Périmètre autorisé :
+- Périmètre interdit :
+- Écarts :
+
+3. ANALYSE / CONSTAT
+- Faits observés dans le dépôt :
+- Déductions techniques :
+- Hypothèses non vérifiées :
+
+4. FICHIERS
+- Fichiers créés :
+- Fichiers modifiés :
+- Fichiers supprimés :
+- Fichiers inspectés :
+
+5. DÉCISIONS TECHNIQUES
+- Décisions :
+- Justifications :
+- Alternatives écartées :
+
+6. TESTS ET RÉSULTATS
+For each test, state PASS / FAIL / NOT TESTED.
+- Command:
+- Result:
+- Evidence / relevant output:
+
+7. BUILD
+- Command:
+- Result:
+- Warnings / errors:
+
+8. RISQUES ET BLOQUEURS
+- Description:
+- Severity:
+- Impact:
+- Blocking:
+- Recommendation:
+
+9. REPRODUCTIBILITÉ
+- Commands to reproduce:
+- Required environment:
+- Temporary files / fixtures:
+
+10. PROCHAINE RECOMMANDATION
+- Recommended next step:
+- Prerequisites:
+- Explicit approval required:
+
+IMPORTANT:
+The complete report must also be included directly in the agent's final response in copy/paste-ready Markdown. Creating this file alone is not sufficient.
