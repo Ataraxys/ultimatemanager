@@ -1,59 +1,92 @@
-RAPPORT AGENT — [MISSION / ÉTAPE]
+RAPPORT AGENT — [MISSION / CORRECTION / AUDIT]
+
+0. IDENTIFICATION ET RÉFÉRENCES GIT
+- Agent / outil :
+- Identifiant de mission ou demande :
+- Date :
+- Branche de départ :
+- SHA de départ / base :
+- Branche d'implémentation :
+- SHA exact du commit applicatif (ou N/A avec explication) :
+- Branche de rapport :
+- Chemin du rapport :
+- Statut de publication GitHub : PUBLISHED / FAILED / NOT AVAILABLE
 
 1. STATUT
-- Statut :
-- Décision éventuelle :
+- Statut : DONE / PARTIAL / BLOCKED
 - Résumé :
+- Décision ou approbation requise :
 
-2. PÉRIMÈTRE
+2. OBJECTIF ET PÉRIMÈTRE
+- Demande :
 - Objectif :
 - Périmètre autorisé :
 - Périmètre interdit :
-- Écarts :
+- Écarts par rapport à la demande :
 
-3. ANALYSE / CONSTAT
+3. DIAGNOSTIC ET CONSTAT
 - Faits observés dans le dépôt :
+- Cause racine / diagnostic :
 - Déductions techniques :
 - Hypothèses non vérifiées :
 
-4. FICHIERS
+4. MODIFICATIONS
 - Fichiers créés :
 - Fichiers modifiés :
 - Fichiers supprimés :
-- Fichiers inspectés :
+- Description précise des changements :
+- Fichiers importants inspectés mais non modifiés :
 
 5. DÉCISIONS TECHNIQUES
 - Décisions :
 - Justifications :
 - Alternatives écartées :
+- Compatibilité avec l'architecture et les décisions existantes :
 
-6. TESTS ET RÉSULTATS
-For each test, state PASS / FAIL / NOT TESTED.
-- Command:
+6. TESTS ET VÉRIFICATIONS
+For each check, state PASS / FAIL / BLOCKED / NOT RUN.
+- Exact command or test:
+- Environment / configuration relevant to the result:
 - Result:
 - Evidence / relevant output:
+- Reason if not run or blocked:
 
 7. BUILD
-- Command:
-- Result:
+- Exact command:
+- Result: PASS / FAIL / BLOCKED / NOT RUN
 - Warnings / errors:
+- Evidence / relevant output:
 
-8. RISQUES ET BLOQUEURS
-- Description:
-- Severity:
-- Impact:
-- Blocking:
-- Recommendation:
+8. RISQUES ET IMPACTS
+- Potential regressions:
+- Data integrity / SQLite impact:
+- Schema / migration / backup impact:
+- Security / privacy impact:
+- Severity and likelihood:
+- Mitigations or tests:
 
-9. REPRODUCTIBILITÉ
+9. LIMITES ET POINTS NON TRAITÉS
+- Work deliberately not done:
+- Remaining issues:
+- Decisions required:
+- Unverified assumptions:
+
+10. REPRODUCTIBILITÉ
 - Commands to reproduce:
 - Required environment:
 - Temporary files / fixtures:
+- Cleanup performed (never modify the user's real database):
 
-10. PROCHAINE RECOMMANDATION
+11. PROCHAINE RECOMMANDATION
 - Recommended next step:
 - Prerequisites:
 - Explicit approval required:
+- Exact commits/branches to inspect:
 
-IMPORTANT:
-The complete report must also be included directly in the agent's final response in copy/paste-ready Markdown. Creating this file alone is not sufficient.
+IMPORTANT
+- The report is evidence, not approval.
+- Never claim a command, test, or build passed unless it was actually executed and its result checked.
+- Clearly distinguish PASS, FAIL, BLOCKED, and NOT RUN.
+- Every agent must include this complete report in its final response and publish it as a unique file under docs/ai-handoff/inbox/ on an ai-handoff/report-* branch.
+- If publication fails, state so explicitly and provide the full report for manual publication.
+- Never include secrets, credentials, personal/customer data, or production database contents.
