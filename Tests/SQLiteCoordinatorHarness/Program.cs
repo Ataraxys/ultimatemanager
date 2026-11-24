@@ -35,7 +35,13 @@ var tests = new (string Name, Func<Task> Test)[]
     ("26_CLIENT_NO_INDEPENDENT_CONNECTION", TestClientNoIndependentConnectionAsync),
     ("27_CLIENT_BACKUP_REGENERATION", TestClientBackupRegenerationAsync),
     ("28_CLIENT_HISTORICAL_DATA", TestClientHistoricalDataAsync),
-    ("29_DYNAMIC_FIELD_BATCH_ROLLBACK", TestDynamicFieldBatchRollbackAsync)
+    ("29_DYNAMIC_FIELD_BATCH_ROLLBACK", TestDynamicFieldBatchRollbackAsync),
+    ("30_BLOCK_ADDED_AFTER_RECORD_CREATION_EDITABLE", TestBlockAddedAfterRecordEditableAsync),
+    ("31_TEMPLATE_BLOCK_EDITABLE_AND_RELOAD", TestTemplateBlockEditableAndReloadAsync),
+    ("32_EMPTY_AND_DUPLICATE_LABELS", TestEmptyAndDuplicateLabelsAsync),
+    ("33_LABEL_RENAME_KEEPS_IDENTITY_AND_VALUES", TestLabelRenameKeepsValuesAsync),
+    ("34_CONCURRENT_RECORD_LOADS_NO_DUPLICATE_INSTANCES", TestConcurrentRecordLoadsNoDuplicatesAsync),
+    ("35_EXISTING_INSTANCES_PRESERVED_AND_BLOCK_RENAME", TestExistingInstancesPreservedAndBlockRenameAsync)
 };
 
 var failed = 0;
@@ -550,6 +556,172 @@ static async Task TestDynamicFieldBatchRollbackAsync()
         DeleteTemporaryDirectory(root);
     }
 }
+
+static async Task WithDynamicServiceAsync(Func<SqliteDynamicFormService, Task> test)
+{
+    var root = CreateTemporaryDirectory();
+    var previous = FileSystem.AppDataDirectory;
+    SqliteDynamicFormService? service = null;
+    try
+    {
+        FileSystem.AppDataDirectory = root;
+        service = new SqliteDynamicFormService(new WorkspaceContextStub(Guid.NewGuid()));
+        await test(service);
+    }
+    finally
+    {
+        if (service is not null)
+        {
+            await service.DisposeAsync();
+        }
+
+        FileSystem.AppDataDirectory = previous;
+        DeleteTemporaryDirectory(root);
+    }
+}
+
+static string ValueOf(EntityRecordModel record, Guid fieldId) =>
+    record.Blocks.SelectMany(item => item.Values).Single(item => item.FieldDefinitionId == fieldId).ValueJson;
+
+static Task TestBlockAddedAfterRecordEditableAsync() => WithDynamicServiceAsync(async service =>
+{
+    var template = await service.CreateTemplateAsync("Fiche");
+    var oldBlock = await service.AddBlockAsync(template.Template.Id, "Ancien");
+    var oldField = await service.AddFieldAsync(oldBlock.Id, "A", FieldType.ShortText);
+    var externalId = Guid.NewGuid();
+    var record = await service.GetOrCreateRecordAsync(externalId, template.Template.Id);
+    var newBlock = await service.AddBlockAsync(template.Template.Id, "Recent");
+    var newField = await service.AddFieldAsync(newBlock.Id, "B", FieldType.LongText);
+    var otherField = await service.AddFieldAsync(newBlock.Id, "C", FieldType.Checkbox);
+    await service.SaveFieldValuesAsync(record.Record.Id, new Dictionary<Guid, string>
+    {
+        [oldField.Id] = "\"ancien\"",
+        [newField.Id] = "\"recent\""
+    });
+
+    var reloaded = await service.GetOrCreateRecordAsync(externalId, template.Template.Id);
+    Assert(reloaded.Blocks.Count == 2, "Le bloc ajouté après la création de la fiche n'a pas d'instance.");
+    Assert(ValueOf(reloaded, oldField.Id) == "\"ancien\"", "Valeur de l'ancien bloc perdue.");
+    Assert(ValueOf(reloaded, newField.Id) == "\"recent\"", "Valeur du bloc récent non relue.");
+    Assert(reloaded.Blocks.SelectMany(item => item.Values).All(item => item.FieldDefinitionId != otherField.Id), "Champ sans valeur : aucune valeur attendue.");
+    var again = await service.GetRecordAsync(record.Record.Id);
+    Assert(again!.Blocks.Count == 2, "La réconciliation doit être idempotente.");
+});
+
+static Task TestTemplateBlockEditableAndReloadAsync() => WithDynamicServiceAsync(async service =>
+{
+    var source = await service.CreateTemplateAsync("Modèle");
+    var block = await service.AddBlockAsync(source.Template.Id, "Bloc modèle");
+    await service.AddFieldAsync(block.Id, "Un", FieldType.ShortText);
+    await service.AddFieldAsync(block.Id, "Deux", FieldType.Phone);
+    var client = await service.CloneTemplateAsync(source.Template.Id, "Fiche cliente");
+    var externalId = Guid.NewGuid();
+    var record = await service.GetOrCreateRecordAsync(externalId, client.Template.Id);
+    var fields = client.Blocks.Single().Fields;
+    await service.SaveFieldValuesAsync(record.Record.Id, fields.ToDictionary(field => field.Id, field => $"\"{field.Label}\""));
+    var reloaded = await service.GetOrCreateRecordAsync(externalId, client.Template.Id);
+    foreach (var field in fields)
+    {
+        Assert(ValueOf(reloaded, field.Id) == $"\"{field.Label}\"", $"Valeur du champ {field.Label} non rechargée.");
+    }
+});
+
+static Task TestEmptyAndDuplicateLabelsAsync() => WithDynamicServiceAsync(async service =>
+{
+    var template = await service.CreateTemplateAsync("Fiche");
+    var block = await service.AddBlockAsync(template.Template.Id, "   ");
+    var empty = await service.AddFieldAsync(block.Id, "", FieldType.ShortText);
+    var first = await service.AddFieldAsync(block.Id, "Doublon", FieldType.ShortText);
+    var second = await service.AddFieldAsync(block.Id, "Doublon", FieldType.ShortText);
+    var loaded = await service.GetTemplateAsync(template.Template.Id);
+    var fields = loaded!.Blocks.Single().Fields;
+    Assert(fields.Count == 3, "Un champ à label vide ou dupliqué a été perdu.");
+    Assert(fields.Select(field => field.Id).Distinct().Count() == 3, "Collision d'identifiants.");
+    Assert(first.Id != second.Id && empty.Id != first.Id, "Les identifiants doivent être indépendants des labels.");
+    Assert(fields.Single(field => field.Id == empty.Id).Label.Length == 0, "Le label vide doit être conservé tel quel.");
+    var record = await service.CreateRecordAsync(template.Template.Id);
+    await service.SaveFieldValuesAsync(record.Record.Id, new Dictionary<Guid, string>
+    {
+        [first.Id] = "\"1\"",
+        [second.Id] = "\"2\""
+    });
+    var reloaded = await service.GetRecordAsync(record.Record.Id);
+    Assert(ValueOf(reloaded!, first.Id) == "\"1\"" && ValueOf(reloaded!, second.Id) == "\"2\"", "Valeurs mélangées entre labels identiques.");
+});
+
+static Task TestLabelRenameKeepsValuesAsync() => WithDynamicServiceAsync(async service =>
+{
+    var template = await service.CreateTemplateAsync("Fiche");
+    var block = await service.AddBlockAsync(template.Template.Id, "Bloc");
+    var target = await service.AddFieldAsync(block.Id, "Ancien label", FieldType.ShortText);
+    var neighbour = await service.AddFieldAsync(block.Id, "Voisin", FieldType.ShortText);
+    var externalId = Guid.NewGuid();
+    var record = await service.GetOrCreateRecordAsync(externalId, template.Template.Id);
+    await service.SaveFieldValuesAsync(record.Record.Id, new Dictionary<Guid, string>
+    {
+        [target.Id] = "\"valeur cible\"",
+        [neighbour.Id] = "\"valeur voisin\""
+    });
+
+    var definition = (await service.GetTemplateAsync(template.Template.Id))!.Blocks.Single().Fields.Single(field => field.Id == target.Id);
+    definition.Label = "  Nouveau label ";
+    await service.UpdateFieldAsync(definition);
+
+    var fields = (await service.GetTemplateAsync(template.Template.Id))!.Blocks.Single().Fields;
+    var renamed = fields.Single(field => field.Id == target.Id);
+    Assert(renamed.Label == "Nouveau label", "Le label n'a pas été modifié.");
+    Assert(renamed.FieldType == FieldType.ShortText && renamed.DisplayOrder == target.DisplayOrder, "Type/ordre modifiés par le renommage.");
+    Assert(fields.Single(field => field.Id == neighbour.Id).Label == "Voisin", "Un autre champ a été affecté.");
+    var reloaded = await service.GetOrCreateRecordAsync(externalId, template.Template.Id);
+    Assert(ValueOf(reloaded, target.Id) == "\"valeur cible\"", "Valeur du champ renommé perdue.");
+    Assert(ValueOf(reloaded, neighbour.Id) == "\"valeur voisin\"", "Valeur du voisin affectée.");
+    Assert(reloaded.Record.Id == record.Record.Id, "La fiche a été recréée.");
+});
+
+static Task TestConcurrentRecordLoadsNoDuplicatesAsync() => WithDynamicServiceAsync(async service =>
+{
+    var template = await service.CreateTemplateAsync("Fiche");
+    var first = await service.AddBlockAsync(template.Template.Id, "Premier");
+    await service.AddFieldAsync(first.Id, "A", FieldType.ShortText);
+    var externalId = Guid.NewGuid();
+    var record = await service.GetOrCreateRecordAsync(externalId, template.Template.Id);
+    for (var index = 0; index < 4; index++)
+    {
+        await service.AddBlockAsync(template.Template.Id, $"Ajout {index}");
+    }
+
+    var loads = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => service.GetRecordAsync(record.Record.Id)));
+    Assert(loads.All(item => item is not null), "Un chargement concurrent a échoué.");
+    var final = await service.GetRecordAsync(record.Record.Id);
+    var definitionIds = final!.Blocks.Select(block => block.Block.BlockDefinitionId).ToList();
+    Assert(definitionIds.Count == 5, $"5 instances attendues, obtenu {definitionIds.Count}.");
+    Assert(definitionIds.Distinct().Count() == 5, "Doublons d'instances après chargements concurrents.");
+    var viaGetOrCreate = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => service.GetOrCreateRecordAsync(externalId, template.Template.Id)));
+    Assert(viaGetOrCreate.All(item => item.Record.Id == record.Record.Id && item.Blocks.Count == 5), "GetOrCreateRecordAsync concurrent a recréé ou dupliqué.");
+});
+
+static Task TestExistingInstancesPreservedAndBlockRenameAsync() => WithDynamicServiceAsync(async service =>
+{
+    var template = await service.CreateTemplateAsync("Fiche");
+    var block = await service.AddBlockAsync(template.Template.Id, "Bloc");
+    var field = await service.AddFieldAsync(block.Id, "Champ", FieldType.ShortText);
+    var externalId = Guid.NewGuid();
+    var record = await service.GetOrCreateRecordAsync(externalId, template.Template.Id);
+    await service.SaveFieldValueAsync(record.Record.Id, field.Id, "\"valeur\"");
+    var instanceBefore = record.Blocks.Single().Block.Id;
+
+    var definition = (await service.GetTemplateAsync(template.Template.Id))!.Blocks.Single().Block;
+    definition.Name = "Bloc renommé";
+    await service.UpdateBlockAsync(definition);
+    await service.AddBlockAsync(template.Template.Id, "Nouveau");
+
+    var reloaded = await service.GetOrCreateRecordAsync(externalId, template.Template.Id);
+    Assert(reloaded.Blocks.Count == 2, "Instance manquante non créée.");
+    Assert(reloaded.Blocks.Any(item => item.Block.Id == instanceBefore), "L'instance existante a été remplacée.");
+    Assert(ValueOf(reloaded, field.Id) == "\"valeur\"", "Valeur perdue après renommage du bloc.");
+    var template2 = await service.GetTemplateAsync(template.Template.Id);
+    Assert(template2!.Blocks.Any(item => item.Block.Id == block.Id && item.Block.Name == "Bloc renommé"), "Nom de bloc non modifié ou identité changée.");
+});
 
 static async Task WithClientServiceAsync(Func<string, SqliteClientService, ClientBackupStub, Task> test)
 {

@@ -8,6 +8,7 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
     private readonly SQLiteAsyncConnection _connection;
     private readonly IWorkspaceContext _workspaceContext;
     private readonly Task _initializationTask;
+    private readonly SemaphoreSlim _blockInstanceLock = new(1, 1);
 
     public SqliteDynamicFormService(IWorkspaceContext workspaceContext)
     {
@@ -561,6 +562,47 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
         return new EntityRecordModel { Record = record, Blocks = blocks };
     }
 
+    // Les blocs ajoutés au modèle après la création de la fiche n'ont pas d'instance :
+    // sans elle, leurs valeurs enregistrées n'étaient jamais relues (bloc « non modifiable »).
+    // La transaction rend lecture + insertion atomiques pour la base ; le verrou applicatif
+    // garantit en plus qu'un seul chargement réconcilie à la fois dans ce service (vérifié par
+    // le test 34 : la transaction seule laissait passer des doublons en chargements concurrents).
+    // Aucune suppression ni écrasement : seules les instances absentes sont créées.
+    private async Task EnsureBlockInstancesAsync(EntityRecord record)
+    {
+        await _blockInstanceLock.WaitAsync();
+        try
+        {
+            await _connection.RunInTransactionAsync(connection =>
+            {
+                var definitions = connection.Table<BlockDefinition>()
+                    .Where(definition => definition.TemplateId == record.TemplateId)
+                    .OrderBy(definition => definition.DisplayOrder)
+                    .ToList();
+                var existingIds = connection.Table<BlockInstance>()
+                    .Where(block => block.EntityRecordId == record.Id)
+                    .ToList()
+                    .Select(block => block.BlockDefinitionId)
+                    .ToHashSet();
+                foreach (var definition in definitions.Where(definition => !existingIds.Contains(definition.Id)))
+                {
+                    connection.Insert(new BlockInstance
+                    {
+                        Id = Guid.NewGuid(),
+                        EntityRecordId = record.Id,
+                        BlockDefinitionId = definition.Id,
+                        Name = definition.Name,
+                        DisplayOrder = definition.DisplayOrder
+                    });
+                }
+            });
+        }
+        finally
+        {
+            _blockInstanceLock.Release();
+        }
+    }
+
     private async Task DeleteRecordDataAsync(Guid recordId)
     {
         var values = await _connection.Table<FieldValue>()
@@ -591,6 +633,7 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             return null;
         }
 
+        await EnsureBlockInstancesAsync(record);
         var blocks = await _connection.Table<BlockInstance>()
             .Where(block => block.EntityRecordId == recordId)
             .OrderBy(block => block.DisplayOrder)

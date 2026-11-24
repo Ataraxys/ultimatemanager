@@ -39,7 +39,7 @@ public sealed class TemplateEditorViewModel(
 
     public async Task AddBlockAsync(string name, CancellationToken cancellationToken = default)
     {
-        var block = await _formService.AddBlockAsync(TemplateId, name, cancellationToken);
+        var block = await _formService.AddBlockAsync(TemplateId, string.IsNullOrWhiteSpace(name) ? "Nouveau bloc" : name, cancellationToken);
         Blocks.Add(new TemplateBlockEditorItem(new BlockDefinitionModel { Block = block }));
         RefreshBlockOrders();
     }

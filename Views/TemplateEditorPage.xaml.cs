@@ -80,7 +80,7 @@ public partial class TemplateEditorPage : ContentPage, IQueryAttributable
     private async void OnAddBlockClicked(object? sender, EventArgs e)
     {
         var name = await DisplayPromptAsync("Nouveau bloc", "Nom du bloc", "Ajouter", "Annuler");
-        if (!string.IsNullOrWhiteSpace(name))
+        if (name is not null)
         {
             await _viewModel.AddBlockAsync(name);
         }

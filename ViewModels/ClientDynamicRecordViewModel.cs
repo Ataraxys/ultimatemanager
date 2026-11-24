@@ -265,10 +265,18 @@ public sealed class ClientDynamicRecordViewModel(
 
             block.Name = blockItem.Name.Trim();
             await _formService.UpdateBlockAsync(block, cancellationToken);
+            var currentFields = template.Blocks.First(item => item.Block.Id == block.Id).Fields;
             foreach (var fieldItem in blockItem.Fields)
             {
-                fieldItem.Definition.Label = fieldItem.Label.Trim();
-                await _formService.UpdateFieldAsync(fieldItem.Definition, cancellationToken);
+                var field = currentFields.FirstOrDefault(item => item.Id == fieldItem.Id);
+                if (field is null)
+                {
+                    continue;
+                }
+
+                // Seul le label change : identité, type, ordre et valeurs restent ceux de la base.
+                field.Label = fieldItem.Label.Trim();
+                await _formService.UpdateFieldAsync(field, cancellationToken);
             }
         }
     }
