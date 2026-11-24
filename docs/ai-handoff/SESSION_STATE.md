@@ -2,27 +2,43 @@
 
 Last updated: 2026-11-24
 
-## Current integration corrective mission — 2026-11-24
+## Current authorized task — full independent review of PR #5
+
+- Mission published: `docs/ai-handoff/outbox/20261124_MISSION-PR5-REVUE-COMPLETE-82-FICHIERS.md`.
+- Mission publication commit on `integration/reconcile-feature-branches`: `0837de814e955cc280e9741ea620537ab3def2d2`.
+- Scope: strictly read-only, exhaustive review of every file changed by PR #5; no code changes, no corrective commits, no approval and no merge.
+- Last GitHub PR metadata after mission publication: PR #5 open, draft, not merged; base `develop` at `47b6dbf615cd62cdb9c5c0be018dda60310c826d`; head `integration/reconcile-feature-branches` at `0837de814e955cc280e9741ea620537ab3def2d2`; 83 changed files (+9,946/-186); mergeable=false at that observation. The new outbox mission itself is committed on the PR head, so the changed-file count is now 83 rather than the previously reported 82. Re-fetch live metadata before starting.
+- Previous independent corrective review is published at `docs/ai-handoff/inbox/20261124-CODEX-pr5-corrective-review.txt` on `ai-handoff/report-corrective-backup-templates`. It accepted the targeted corrective diff with environment/UI caveats, but explicitly did not approve the full PR.
+- Required output: exhaustive file-by-file review matrix, evidence-backed P0–P3 findings, separate product/architecture decisions, exact verification results, and a single verdict APPROVE / REQUEST CHANGES / BLOCKED.
+- Report branch must be report-only and based on the refreshed current `develop` SHA. No application code on that branch.
+- Do not merge PR #5. Do not modify `develop`, the integration code, the feature source branch, or the protected local worktree. Preserve the pre-existing `UltimateManager.csproj` change on `feature/block-instances-fix`.
+
+## Latest corrective mission — backup fail-closed and template visibility
 
 - Mission: `docs/ai-handoff/outbox/20261124_CORRECTIVE-BACKUP-TEMPLATES.md`.
-- Authorized implementation branch: `integration/reconcile-feature-branches`; base `develop` remains `47b6dbf615cd62cdb9c5c0be018dda60310c826d`.
+- Authorized implementation branch: `integration/reconcile-feature-branches`; base `develop` was `47b6dbf615cd62cdb9c5c0be018dda60310c826d`.
 - Source branch inspected read-only: `feature/block-instances-fix` at `bde661d52b811ab7e06278a64faf64f467354daf`; it contains `feature/add-personalisation` at `2bbcd1b35c9481794e5d4f9be379e8fb486c4560`.
-- Corrective code commit: `0618726d2ccce1a0a9c765a6d14aa08cf581bc62`; it follows integration commit `ebf1c3e4fd29aec225be1ef681defdcc7c6fecc4` carrying this mission. The current state-file update is a later documentation-only commit; see the corrective mission report for the final branch SHA.
-- `CompleteBackupService.PickAndRestoreAsync` now fails closed with `NotSupportedException` before file selection or database initialization. The destructive import path is removed. The UI restore toolbar action is disabled and the page explains that restore is temporarily unavailable. Backup creation and sharing remain enabled; safe restore is not implemented.
+- Corrective code commit: `0618726d2ccce1a0a9c765a6d14aa08cf581bc62`.
+- Corrective documentation/session commits preceded the full-review mission; latest integration head is recorded above.
+- `CompleteBackupService.PickAndRestoreAsync` fails closed with `NotSupportedException` before file selection or database initialization. The destructive import path is removed. The UI restore toolbar action is disabled and the page explains that restore is temporarily unavailable. Backup creation and sharing remain available; safe restore is not implemented.
 - `SqliteDynamicFormService.GetTemplatesAsync` returns every template in the active Workspace, still ordered by name. A used template remains visible and reusable; another Workspace's template stays filtered out.
-- Verification on the corrective code: Android Debug build PASS (0 warnings, 0 errors); SQLite harness PASS (`failed=0`, 39 PASS, tests 16/17 NOT_TESTED); targeted tests 40/41 prove used-template availability and unchanged rows after restore refusal. Manual MAUI flow NOT TESTED (`adb` unavailable).
-- PR #5 targets `develop`, is open and draft, and has not been merged. GitHub mergeability responses have alternated between `true` and `false`; the latest metadata fetch returned `false`. Verify the live PR status before any merge decision.
-- The user’s original `feature/block-instances-fix` worktree and pre-existing `UltimateManager.csproj` diff remain untouched. No changes were made to `develop` or feature source branches.
-- Current next step: independent review of this corrective diff. Do not merge PR #5 until the review and required product/architecture decisions are complete.
+- Implementation report claimed Android Debug build PASS (0 warnings, 0 errors); SQLite harness PASS (`failed=0`, 39 PASS, tests 16/17 NOT_TESTED); manual MAUI flow NOT TESTED (`adb` unavailable). The independent reviewer could not reproduce Android build because of environment write/NuGet/asset errors; see the report for exact commands.
+- Independent corrective review: `docs/ai-handoff/inbox/20261124-CODEX-pr5-corrective-review.txt`, report branch `ai-handoff/report-corrective-backup-templates`, report commit `63c6c277f90e170d2f8dc0c4293996e78bd79e35` (report blob SHA `8e4ef86c1502840170e77cda6565cf5e780017a0`). Verdict: targeted correction acceptable with build/UI caveats; full PR not approved.
+- Historical test 40 was considered insufficient for two distinct clients reusing the same source template. The full PR review mission explicitly requires revalidation of this gap and the template provisional-clone lifecycle.
 
-## Latest feature correction review — 2026-11-24
+## Earlier integration status and known audit areas
 
-- Mission: block label editing / recently added dynamic blocks.
-- Independent review: `docs/ai-handoff/outbox/20261124_MISSION-BLOCK-LABEL-EDITING_CHATGPT-REVIEW.md`.
-- Verdict: **REQUEST CHANGES**. The service-level correction is promising, but the MAUI UI was not manually validated, the block-instance reconciliation is not concurrency-safe as written, and the agent placed application code on a report-only branch.
-- Reported code commit: `1ae541ba86a77eaebac581114f06f008c8e7ea8d`, currently on `ai-handoff/report-block-label-editing`. Do not merge this branch or treat it as a report-only branch.
-- Starting feature SHA reported by the agent: `2bbcd1b35c9481794e5d4f9be379e8fb486c4560`.
-- Next step: targeted correction/revalidation on an authorized implementation branch, with backend support for safe reconciliation, real UI validation, and a report-only branch based on current `develop`. No merge authorized.
+The following risks were identified in earlier reviews and must be revalidated against the exact current PR diff; do not assume they remain present or have been fixed:
+
+1. Backup restore destructive behavior (targeted correction now disables restore; verify every entry point).
+2. Template visibility/reuse and template clone lifecycle.
+3. BlockInstance identity and whether repeated independent occurrences of a block are supported.
+4. SQLite coordinator adoption across services.
+5. Client deletion and orphaned dynamic records/values.
+6. Workspace scoping for clients, search, records and exports.
+7. Structure-edit cancellation and persistence rollback.
+8. Backup export scope consistency between clients and dynamic records.
+9. Actual UI validation versus service-level harness coverage.
 
 ## Collaboration model
 
@@ -44,70 +60,17 @@ Last updated: 2026-11-24
 - Preserve existing functionality and user data; avoid destructive schema or restore operations.
 - Record architectural decisions in `docs/01-architecture/DECISIONS.md` and update affected documentation.
 
-## Mission 1 — SQLite security, migrations and backups
+## Branch governance — mandatory
 
-### Completed and reviewed (branch-specific)
-
-- Step 1: SQLite API/design verification completed, with journal-mode probe limitation documented.
-- Steps 2 / 2B / 2C: central `ISqliteDatabase` contract and `SQLiteDatabaseCoordinator` implemented and independently reviewed on `feature/add-personalisation`; they are **not present on develop**.
-- Step 3: `SqliteClientService` migrated to `ISqliteDatabase` on `feature/add-personalisation`; harness and Android Debug build were reported as passed on that branch. The implementation is **not present on develop**.
-- Step 4A: read-only audit completed and reviewed on `feature/add-personalisation`; findings confirmed, with template-list behavior reserved for product arbitration.
-- Step 4B: read-only detailed design completed and reviewed. Status: **VALIDÉ SOUS RÉSERVES**. Review: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4B-CHATGPT-REVIEW.md`.
-- Step 4C: implementation **BLOCKED before coding** because its required base `develop` does not contain the Step 2/3 prerequisites. Codex correctly made no application changes. Review: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4C-CHATGPT-REVIEW.md`.
-
-### Current Git reality
-
-- `develop` currently does not contain `ISqliteDatabase`, `SQLiteDatabaseCoordinator`, `LocalWorkspaceContext`, or `SqliteDynamicFormService`.
-- `feature/add-personalisation` contains these files but is significantly divergent and includes broad UI, dynamic-engine, backup, test, and documentation changes.
-- Latest live comparison checked 2026-11-23: `feature/add-personalisation` is 3 commits ahead and 15 behind `develop`; GitHub reports 83 changed files, 9,121 additions and 167 deletions. `develop` is not literally empty: it contains the existing application baseline plus handoff/governance updates, but it lacks the feature branch's Steps 2/3 and dynamic-form implementation.
-- PR #3 must not be merged solely to unblock Step 4C. It requires a full integration audit first.
-- The earlier session status overstated repository-wide completion by not distinguishing branch-local work from `develop`. This correction is authoritative.
-
-### Branch governance — corrected
-
-- `develop` is the canonical application integration branch and must represent the latest accepted application state.
-- `feature/*` branches are temporary implementation branches based on the current `develop` SHA; feature work is not globally complete until reviewed and integrated.
+- `develop` is the canonical application integration branch.
+- `feature/*` branches are temporary implementation branches based on the current `develop` unless a mission explicitly authorizes another base.
 - `ai-handoff/report-*` branches contain reports only and are never implementation bases.
-- Dependent missions cannot start until prerequisites are present on the approved base branch.
-- If a feature branch is materially divergent, run a read-only integration audit first; do not blindly merge, rebase, cherry-pick, or copy partial files.
-- After integration, verify the exact resulting `develop` SHA and the presence of prerequisites before issuing dependent work.
-
-## Previous mission — integration audit of PR #3 (historical; superseded)
-
-- Mission at the time: `MISSION-1-INTEGRATION-AUDIT-PR3`.
-- Brief: `docs/ai-handoff/outbox/20261123_MISSION-1-INTEGRATION-AUDIT-PR3.md`.
-- Scope: strictly read-only audit of PR #3 / `feature/add-personalisation` against current `develop`; inventory changes, verify SQLite and UI requirements, inspect tests, identify divergence/conflicts, and propose a safe integration plan.
-- This was historical read-only guidance from before the authorized integration mission dated 2026-11-24. The current authorized status and next step are recorded at the top of this file.
-
-### Step 4C — paused pending integration decision
-
-- Do not execute the previous Step 4C brief until the integration audit determines the correct application base and ChatGPT issues a revised brief.
-- After integration, reissue Step 4C against the accepted branch/commit, with the Step 4B architectural decisions unchanged unless explicitly revised.
-
-### Step 4D — pending: backup and restore safety
-
-- Separate mission after Step 4C review.
-- Must decide and implement explicit Workspace vs full-application archive scopes.
-- ZIP v1 must not be silently restored while its scope is ambiguous.
-- No Workspace restore may delete global Clients or rows belonging to another Workspace.
-- Add full archive validation, staging, failure injection, and recovery journal/marker before authorizing restore implementation.
-
-## Accepted reservations
-
-- JSON backup generation can race under concurrent client writes; ordering/serialization needs a dedicated design.
-- Historical-data test is not a fixture from a real prior schema.
-- Initialization uniqueness is not directly instrumented.
-- Dynamic-table initialization is not covered by end-to-end fresh-install integration tests.
-- Real backup file failures are not injected.
-- `CompleteBackupService` still has a private SQLite connection and a global destructive restore path on the feature branch; it remains a high-priority unresolved risk.
-- Coordinator CloseAsync / ExitLock failure injection remains untested.
-
-## Guardrails
-
+- Every mission must have a uniquely named brief in `outbox/`; every agent task must have a unique report in `inbox/`.
+- Before each task, refresh remote refs and record exact SHAs. Stop if the authorized base or prerequisites are unclear.
+- No merge, rebase, cherry-pick, reset, force-push, branch deletion, or destructive Git operation without explicit user approval.
+- No push to `develop` or `master` without explicit authorization.
+- Never claim local uncommitted changes are visible through GitHub.
 - Never use or modify the user's real SQLite database during tests.
-- No destructive migration or restore without explicit approved policy.
-- No Workspace isolation changes in Mission 1.
-- No dynamic-engine redesign in the SQLite-centralization mission.
 - Preserve the exact UI rule: “Modifier” edits content only; pencil “✎” edits the full structure/template.
-- Do not claim that local uncommitted changes are visible through GitHub.
-- Cloud orchestration PR #4 is parked; continue the normal manual `@execute` / `@review` workflow.
+- Cloud orchestration PR #4 remains parked; continue the normal manual `@execute` / `@review` workflow.
+
