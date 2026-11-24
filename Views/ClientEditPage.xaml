@@ -3,73 +3,114 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:viewModels="clr-namespace:UltimateManager.ViewModels"
              x:Class="UltimateManager.Views.ClientEditPage"
+             x:Name="EditPage"
              x:DataType="viewModels:ClientEditViewModel"
              Title="Client">
     <ScrollView>
         <VerticalStackLayout Padding="20,16,20,28" Spacing="16">
-            <Label Text="Informations personnelles" Style="{StaticResource SectionTitle}" />
-
-            <VerticalStackLayout Spacing="4">
-                <Label Text="Prénom *" />
-                <Entry Text="{Binding FirstName}"
-                       Placeholder="Prénom"
-                       ReturnType="Next" />
+            <VerticalStackLayout Spacing="8">
+                <Label Text="Identifier le client" Style="{StaticResource SectionTitle}" />
+                <Entry Text="{Binding FirstName}" Placeholder="Prénom *" ReturnType="Next" />
                 <Label Text="{Binding FirstNameError}"
                        IsVisible="{Binding FirstNameError, Converter={StaticResource StringNotEmptyConverter}}"
                        TextColor="#C62828"
                        FontSize="12" />
-            </VerticalStackLayout>
-
-            <VerticalStackLayout Spacing="4">
-                <Label Text="Nom *" />
-                <Entry Text="{Binding LastName}"
-                       Placeholder="Nom"
-                       ReturnType="Next" />
+                <Entry Text="{Binding LastName}" Placeholder="Nom (facultatif)" ReturnType="Next" />
                 <Label Text="{Binding LastNameError}"
                        IsVisible="{Binding LastNameError, Converter={StaticResource StringNotEmptyConverter}}"
                        TextColor="#C62828"
                        FontSize="12" />
             </VerticalStackLayout>
 
-            <Label Text="Coordonnées" Style="{StaticResource SectionTitle}" />
-            <Entry Text="{Binding PhoneNumber}"
-                   Placeholder="Téléphone"
-                   Keyboard="Telephone"
-                   ReturnType="Next" />
-            <Entry Text="{Binding Email}"
-                   Placeholder="Email"
-                   Keyboard="Email"
-                   ReturnType="Next" />
+            <VerticalStackLayout IsVisible="{Binding IsNewClient}" Spacing="8">
+            <Label Text="Structure de départ" Style="{StaticResource SectionTitle}" />
+            <Picker ItemsSource="{Binding Templates}"
+                    ItemDisplayBinding="{Binding Name}"
+                    SelectedItem="{Binding SelectedTemplate, Mode=TwoWay}"
+                    SelectedIndexChanged="OnTemplateChanged"
+                    Title="Choisir un modèle" />
+            <Border Padding="12"
+                    Stroke="{StaticResource Gray200}"
+                    StrokeShape="RoundRectangle 12"
+                    IsVisible="{Binding SelectedTemplatePreview, Converter={StaticResource StringNotEmptyConverter}}">
+                <VerticalStackLayout Spacing="4">
+                    <Label Text="Aperçu" FontAttributes="Bold" />
+                    <Label Text="{Binding SelectedTemplatePreview}" TextColor="{StaticResource Gray500}" />
+                </VerticalStackLayout>
+            </Border>
+            </VerticalStackLayout>
 
-            <Label Text="Adresse" Style="{StaticResource SectionTitle}" />
-             <Entry Text="{Binding Address, Mode=TwoWay}"
-                   Placeholder="Adresse"
-                    IsTextPredictionEnabled="False"
-                    ClearButtonVisibility="WhileEditing"
-                   ReturnType="Next" />
-            <Label Text="Localisation GPS" Style="{StaticResource SectionTitle}" />
-            <Button Text="Choisir sur la carte"
-                    Command="{Binding PickLocationCommand}"
-                    HorizontalOptions="Start" />
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                <Entry ClassId="Latitude"
-                       Text="{Binding Latitude, Mode=TwoWay}"
-                       Placeholder="Latitude"
-                       Keyboard="Numeric"
-                       ReturnType="Next" />
-                <Entry ClassId="Longitude"
-                       Grid.Column="1"
-                       Text="{Binding Longitude, Mode=TwoWay}"
-                       Placeholder="Longitude"
-                       Keyboard="Numeric"
-                       ReturnType="Next" />
-            </Grid>
-
-            <Label Text="Commentaire" Style="{StaticResource SectionTitle}" />
-            <Editor Text="{Binding Comment}"
-                    Placeholder="Ajouter un commentaire"
-                    AutoSize="TextChanges"
-                    MinimumHeightRequest="120" />
+            <Label Text="Blocs et objets" Style="{StaticResource SectionTitle}" />
+            <Button Text="+ Ajouter un bloc"
+                    Clicked="OnAddBlockClicked"
+                    HorizontalOptions="Start"
+                    IsVisible="{Binding IsStructureEditing}" />
+            <VerticalStackLayout BindableLayout.ItemsSource="{Binding EditableDynamicBlocks}" Spacing="12">
+                <BindableLayout.ItemTemplate>
+                    <DataTemplate x:DataType="viewModels:DynamicRecordBlockItem">
+                        <Border Padding="14" Stroke="{StaticResource Gray200}" StrokeShape="RoundRectangle 16">
+                            <VerticalStackLayout Spacing="8">
+                                 <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="4">
+                                    <Entry Text="{Binding Name}" Placeholder="Nom du bloc" FontAttributes="Bold" IsReadOnly="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                    <Button Grid.Column="1" Text="↑" Clicked="OnMoveBlockUpClicked" Padding="6,0" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                    <Button Grid.Column="2" Text="↓" Clicked="OnMoveBlockDownClicked" Padding="6,0" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                    <Button Grid.Column="3" Text="+ Objet" Clicked="OnAddFieldClicked" Padding="6,0" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                    <Button Grid.Column="4" Text="Suppr." Clicked="OnDeleteBlockClicked" Padding="6,0" TextColor="#C62828" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                </Grid>
+                                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Fields}" Spacing="8">
+                                    <BindableLayout.ItemTemplate>
+                                        <DataTemplate x:DataType="viewModels:DynamicRecordFieldItem">
+                                            <VerticalStackLayout Spacing="4">
+                                                <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="4">
+                                                     <Label Text="{Binding Label}" FontSize="13" TextColor="{StaticResource Gray500}" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                                                     <Entry Text="{Binding Label}" Placeholder="Nom du champ" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                                     <Button Grid.Column="1" Text="↑" Clicked="OnMoveFieldUpClicked" Padding="6,0" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                                     <Button Grid.Column="2" Text="↓" Clicked="OnMoveFieldDownClicked" Padding="6,0" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                                     <Button Grid.Column="3" Text="Suppr." Clicked="OnDeleteFieldClicked" Padding="6,0" TextColor="#C62828" IsVisible="{Binding Source={x:Reference EditPage}, Path=BindingContext.IsStructureEditing}" />
+                                                </Grid>
+                                                <Entry Text="{Binding Value}" IsVisible="{Binding IsSimple}" Placeholder="Saisir une valeur" />
+                                                <Editor Text="{Binding Value}" IsVisible="{Binding IsLongText}" AutoSize="TextChanges" MinimumHeightRequest="90" />
+                                                <CheckBox IsVisible="{Binding IsCheckbox}" IsChecked="{Binding BooleanValue}" HorizontalOptions="Start" />
+                                                <DatePicker IsVisible="{Binding IsDate}" Date="{Binding DateValue}" />
+                                                <Picker IsVisible="{Binding IsDropdown}" ItemsSource="{Binding Options}" SelectedItem="{Binding Value}" />
+                                                <Grid IsVisible="{Binding IsPhone}" ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                                                    <Entry Text="{Binding CountryCode}" Keyboard="Telephone" Placeholder="+33" WidthRequest="80" />
+                                                    <Entry Grid.Column="1" Text="{Binding PhoneNumber}" Keyboard="Telephone" Placeholder="Téléphone" />
+                                                </Grid>
+                                                <VerticalStackLayout IsVisible="{Binding IsAddress}" Spacing="6">
+                                                    <Entry Text="{Binding Address}" Placeholder="Adresse" />
+                                                    <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                                        <Entry Text="{Binding Latitude}" Placeholder="Latitude" Keyboard="Numeric" />
+                                                        <Entry Grid.Column="1" Text="{Binding Longitude}" Placeholder="Longitude" Keyboard="Numeric" />
+                                                    </Grid>
+                                                    <HorizontalStackLayout Spacing="8">
+                                                        <Button Text="Choisir sur la carte" Clicked="OnPickLocationClicked" Padding="10,4" />
+                                                        <Button Text="Ouvrir dans Google Maps" Clicked="OnOpenMapClicked" Padding="10,4" />
+                                                    </HorizontalStackLayout>
+                                                </VerticalStackLayout>
+                                                <VerticalStackLayout IsVisible="{Binding IsGeoPoint}" Spacing="6">
+                                                    <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                                        <Entry Text="{Binding Latitude}" Placeholder="Latitude" Keyboard="Numeric" />
+                                                        <Entry Grid.Column="1" Text="{Binding Longitude}" Placeholder="Longitude" Keyboard="Numeric" />
+                                                    </Grid>
+                                                    <HorizontalStackLayout Spacing="8">
+                                                        <Button Text="Choisir sur la carte" Clicked="OnPickLocationClicked" Padding="10,4" />
+                                                        <Button Text="Ouvrir dans Google Maps" Clicked="OnOpenMapClicked" Padding="10,4" />
+                                                    </HorizontalStackLayout>
+                                                </VerticalStackLayout>
+                                                <Grid IsVisible="{Binding IsDocument}" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                    <Entry Text="{Binding DocumentPath}" IsReadOnly="True" Placeholder="Aucun document" />
+                                                    <Button Grid.Column="1" Text="Choisir" Clicked="OnPickDocumentClicked" />
+                                                </Grid>
+                                            </VerticalStackLayout>
+                                        </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </VerticalStackLayout>
+                            </VerticalStackLayout>
+                        </Border>
+                    </DataTemplate>
+                </BindableLayout.ItemTemplate>
+            </VerticalStackLayout>
 
             <ActivityIndicator IsRunning="{Binding IsBusy}"
                                IsVisible="{Binding IsBusy}"
@@ -80,7 +121,13 @@
                 <Button Text="Annuler"
                         Clicked="OnCancelClicked"
                         BackgroundColor="{StaticResource Gray200}"
-                        TextColor="{StaticResource Gray900}" />
+                        TextColor="{StaticResource Gray900}"
+                        IsVisible="{Binding IsStructureEditing, Converter={StaticResource InverseBooleanConverter}}" />
+                <Button Text="Retour"
+                        Clicked="OnCancelClicked"
+                        BackgroundColor="{StaticResource Gray200}"
+                        TextColor="{StaticResource Gray900}"
+                        IsVisible="{Binding IsStructureEditing}" />
                 <Button Grid.Column="1"
                         Text="Enregistrer"
                         Clicked="OnSaveClicked"

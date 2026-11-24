@@ -8,8 +8,10 @@
              Title="Clients">
     <ContentPage.ToolbarItems>
         <ToolbarItem Text="Importer" Command="{Binding ImportCommand}" />
+        <ToolbarItem Text="Templates" Clicked="OnTemplatesClicked" />
         <ToolbarItem Text="Importer une sauvegarde" Clicked="OnImportBackupClicked" />
         <ToolbarItem Text="Sauvegarder" Clicked="OnShareBackupClicked" />
+        <ToolbarItem Text="Restaurer (indisponible)" IsEnabled="False" />
     </ContentPage.ToolbarItems>
     <Grid Padding="20,16"
           RowDefinitions="Auto,Auto,*"
@@ -21,6 +23,9 @@
                    TextColor="{StaticResource Gray900}" />
             <Label Text="Votre répertoire clients"
                    FontSize="14"
+                   TextColor="{StaticResource Gray500}" />
+            <Label Text="La restauration d’archives est temporairement désactivée afin de protéger les données existantes. Les sauvegardes restent disponibles."
+                   FontSize="12"
                    TextColor="{StaticResource Gray500}" />
         </VerticalStackLayout>
 

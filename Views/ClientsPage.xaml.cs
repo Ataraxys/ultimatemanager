@@ -20,6 +20,11 @@ public partial class ClientsPage : ContentPage
         _viewModel.ImportRequested += OnImportRequested;
     }
 
+    private async void OnTemplatesClicked(object? sender, EventArgs e)
+    {
+        await Shell.Current.GoToAsync("TemplatesPage");
+    }
+
     private async void OnImportRequested(object? sender, EventArgs e)
     {
         await Shell.Current.GoToAsync("ContactImportPage");
@@ -27,10 +32,20 @@ public partial class ClientsPage : ContentPage
 
     private async void OnShareBackupClicked(object? sender, EventArgs e)
     {
-        var clientService = App.Services.GetRequiredService<IClientService>();
-        var backupService = App.Services.GetRequiredService<IClientBackupService>();
-        await backupService.RegenerateAsync(await clientService.GetAllAsync());
-        await backupService.ShareAsync();
+        try
+        {
+            var backupService = App.Services.GetRequiredService<ICompleteBackupService>();
+            await backupService.CreateAndShareAsync();
+        }
+        catch (Exception exception)
+        {
+            await DisplayAlertAsync("Sauvegarde", $"La sauvegarde complète a échoué : {exception.Message}", "OK");
+        }
+    }
+
+    private Task OnImportCompleteBackupClicked(object? sender, EventArgs e)
+    {
+        return DisplayAlertAsync("Restauration indisponible", ICompleteBackupService.RestoreUnavailableMessage, "OK");
     }
 
     private async void OnImportBackupClicked(object? sender, EventArgs e)

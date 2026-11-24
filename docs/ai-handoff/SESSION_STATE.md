@@ -1,101 +1,77 @@
 # UltimateManager — AI Session State
 
-Last updated: 2026-11-24
+Last updated: 2026-11-25
 
-## Latest feature correction review — 2026-11-24
+## Mission active — MAUI data stabilization, direct integration workflow
 
-- Mission: block label editing / recently added dynamic blocks.
-- Independent review: `docs/ai-handoff/outbox/20261124_MISSION-BLOCK-LABEL-EDITING_CHATGPT-REVIEW.md`.
-- Verdict: **REQUEST CHANGES**. The service-level correction is promising, but the MAUI UI was not manually validated, the block-instance reconciliation is not concurrency-safe as written, and the agent placed application code on a report-only branch.
-- Reported code commit: `1ae541ba86a77eaebac581114f06f008c8e7ea8d`, currently on `ai-handoff/report-block-label-editing`. Do not merge this branch or treat it as a report-only branch.
-- Starting feature SHA reported by the agent: `2bbcd1b35c9481794e5d4f9be379e8fb486c4560`.
-- Next step: targeted correction/revalidation on an authorized implementation branch, with backend support for safe reconciliation, real UI validation, and a report-only branch based on current `develop`. No merge authorized.
+- Responsible agent: **MAUI Developer** (implementation agent, not `@qa-reviewer`).
+- Mission: `docs/ai-handoff/outbox/20261125_MISSION-MAUI-DATA-STABILIZATION-INTEGRATE-DEVELOP.md`.
+- The owner explicitly authorized the MAUI Developer to work directly on the existing branch `integration/reconcile-feature-branches`, commit implementation changes there, and integrate PR #5 into `develop` when the delivery criteria are met.
+- No separate implementation branch is authorized or required.
+- Known starting PR head before publishing this mission: `b59b6352bb2c473a1da84a1e62d7ca564a2f4e18`.
+- Mission publication commit: `aea2fce96cca1f96647e2a8c4fef70520ddb20a1`. Refresh the branch and use its actual latest HEAD before coding.
+- PR #5: https://github.com/Ataraxys/ultimatemanager/pull/5 — base `develop`, head `integration/reconcile-feature-branches`.
+- Scope: implement applicable P1/P2 findings from the Copilot QA report (Workspace isolation, client deletion/cascades, SQLite coordinator adoption, template switching and cancellation, atomic dynamic operations, safe migrations, backup consistency/performance), preserve all product UX rules, add regression tests using temporary databases, and run available Android builds.
+- Conditional integration authorization: after all P1 findings are fixed, essential tests pass, migrations are safe, and the complete PR diff is checked, merge PR #5 into `develop` using a normal merge commit. No direct push to `develop`. If criteria are not met, leave PR #5 open and report exact blockers.
+- No new audit cycle. The MAUI Developer owns implementation through delivery. No handoff to another agent for implementation.
+- Required report: unique `.txt` in `docs/ai-handoff/inbox/` on a report-only `ai-handoff/report-data-stabilization` branch based on refreshed `develop`, per `AGENT_PROTOCOL.md`.
+- Mission file was published on the integration branch in commit `aea2fce96cca1f96647e2a8c4fef70520ddb20a1`.
+
+## Previous Copilot QA report — findings to implement, not re-audit
+
+Report: `docs/ai-handoff/inbox/20261125-COPILOT-QA-PR5-FULL-REVIEW.txt`, branch `ai-handoff/report-copilot-pr5-full-review`, report commit `48f847392d526428df5e684c07d14270c400859a`.
+
+Key findings recorded there:
+- P1 Workspace isolation absent for clients and backup export.
+- P1 client deletion may leave dynamic records, values, instances and client-specific templates orphaned.
+- P1 several services open independent SQLite connections instead of consistently using the coordinator.
+- P1 switching templates during new-client creation may conflict with an already-created record.
+- P1 cancelling new-client creation may leave persisted provisional clones/records.
+- P2 multi-step dynamic operations may not be transactional and may leave orphans.
+- P2 migration code may swallow unexpected SQLite errors.
+- P2 backup regeneration and snapshot behavior need correction.
+- Test harness coverage gaps include Workspace isolation, client deletion, cancellation and template switching.
+These are implementation leads; verify current code while fixing them and do not create another general audit deliverable.
+
+## Previous targeted corrective work
+
+- Corrective mission: `docs/ai-handoff/outbox/20261124_CORRECTIVE-BACKUP-TEMPLATES.md`.
+- Corrective code commit: `0618726d2ccce1a0a9c765a6d14aa08cf581bc62`.
+- Restore remains deliberately fail-closed/unavailable; do not reintroduce destructive restore.
+- `SqliteDynamicFormService.GetTemplatesAsync` returns templates for the active Workspace, including templates already in use.
+- Prior implementation report claimed Android Debug build PASS and SQLite harness 39 PASS / 2 NOT_TESTED; manual MAUI UI was NOT TESTED. Treat these as historical claims, not proof for the new changes.
+- Independent corrective review: `docs/ai-handoff/inbox/20261124-CODEX-pr5-corrective-review.txt`, report commit `63c6c277f90e170d2f8dc0c4293996e78bd79e35`.
 
 ## Collaboration model
 
-- ChatGPT acts as product/technical cofounder: roadmap, architecture, technical arbitration, independent review, and approval of next steps.
-- Codex / GitHub Copilot agents execute repository analysis, implementation, and QA within explicitly assigned scopes.
+- ChatGPT handles product/technical arbitration and delivery review.
+- The MAUI Developer owns this implementation end-to-end.
 - Shared handoff location: `docs/ai-handoff/`.
-- ChatGPT → Codex: `docs/ai-handoff/outbox/`.
-- Codex → ChatGPT: `docs/ai-handoff/inbox/`.
-- All completed agent reports must be saved as unique `.txt` files and also included in the agent's final response.
+- ChatGPT → agents: `docs/ai-handoff/outbox/`.
+- Agents → ChatGPT: `docs/ai-handoff/inbox/`.
+- Every completed agent task publishes one unique report.
+- The report is evidence, not automatic approval.
 
 ## Product and architecture direction
 
-- UltimateManager is intended to evolve into a polished, extensible business-management platform with eventual SaaS/commercial potential.
+- UltimateManager is intended to evolve into a polished, extensible business-management platform.
 - Build local-first with SQLite now; do not introduce cloud sync prematurely.
-- Keep standard business entities strongly typed (for example Contact, Task, Project, Event, Document).
-- Use a dynamic object/field engine for user-defined object types and custom fields; do not turn every business entity into a generic ObjectRecord.
-- Workspaces are a central future boundary; groups, users, contacts, and permissions will evolve around them.
+- Keep standard business entities strongly typed.
+- Use a dynamic object/field engine for user-defined object types and custom fields.
+- Workspaces are a central data-isolation boundary.
 - Prefer clean, maintainable object-oriented architecture without premature project splitting or overengineering.
 - Preserve existing functionality and user data; avoid destructive schema or restore operations.
-- Record architectural decisions in `docs/01-architecture/DECISIONS.md` and update affected documentation.
-
-## Mission 1 — SQLite security, migrations and backups
-
-### Completed and reviewed (branch-specific)
-
-- Step 1: SQLite API/design verification completed, with journal-mode probe limitation documented.
-- Steps 2 / 2B / 2C: central `ISqliteDatabase` contract and `SQLiteDatabaseCoordinator` implemented and independently reviewed on `feature/add-personalisation`; they are **not present on develop**.
-- Step 3: `SqliteClientService` migrated to `ISqliteDatabase` on `feature/add-personalisation`; harness and Android Debug build were reported as passed on that branch. The implementation is **not present on develop**.
-- Step 4A: read-only audit completed and reviewed on `feature/add-personalisation`; findings confirmed, with template-list behavior reserved for product arbitration.
-- Step 4B: read-only detailed design completed and reviewed. Status: **VALIDÉ SOUS RÉSERVES**. Review: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4B-CHATGPT-REVIEW.md`.
-- Step 4C: implementation **BLOCKED before coding** because its required base `develop` does not contain the Step 2/3 prerequisites. Codex correctly made no application changes. Review: `docs/ai-handoff/outbox/20261123_MISSION-1-STEP-4C-CHATGPT-REVIEW.md`.
-
-### Current Git reality
-
-- `develop` currently does not contain `ISqliteDatabase`, `SQLiteDatabaseCoordinator`, `LocalWorkspaceContext`, or `SqliteDynamicFormService`.
-- `feature/add-personalisation` contains these files but is significantly divergent and includes broad UI, dynamic-engine, backup, test, and documentation changes.
-- Latest live comparison checked 2026-11-23: `feature/add-personalisation` is 3 commits ahead and 15 behind `develop`; GitHub reports 83 changed files, 9,121 additions and 167 deletions. `develop` is not literally empty: it contains the existing application baseline plus handoff/governance updates, but it lacks the feature branch's Steps 2/3 and dynamic-form implementation.
-- PR #3 must not be merged solely to unblock Step 4C. It requires a full integration audit first.
-- The earlier session status overstated repository-wide completion by not distinguishing branch-local work from `develop`. This correction is authoritative.
-
-### Branch governance — corrected
-
-- `develop` is the canonical application integration branch and must represent the latest accepted application state.
-- `feature/*` branches are temporary implementation branches based on the current `develop` SHA; feature work is not globally complete until reviewed and integrated.
-- `ai-handoff/report-*` branches contain reports only and are never implementation bases.
-- Dependent missions cannot start until prerequisites are present on the approved base branch.
-- If a feature branch is materially divergent, run a read-only integration audit first; do not blindly merge, rebase, cherry-pick, or copy partial files.
-- After integration, verify the exact resulting `develop` SHA and the presence of prerequisites before issuing dependent work.
-
-## Next mission — integration audit of PR #3
-
-- Mission: `MISSION-1-INTEGRATION-AUDIT-PR3`.
-- Brief: `docs/ai-handoff/outbox/20261123_MISSION-1-INTEGRATION-AUDIT-PR3.md`.
-- Scope: strictly read-only audit of PR #3 / `feature/add-personalisation` against current `develop`; inventory changes, verify SQLite and UI requirements, inspect tests, identify divergence/conflicts, and propose a safe integration plan.
-- No merge, rebase, cherry-pick, branch update, code change, or push of application code is authorized.
-- Required report: complete in Codex final response and unique `.txt` under `docs/ai-handoff/inbox/`, published on a report-only branch.
-
-### Step 4C — paused pending integration decision
-
-- Do not execute the previous Step 4C brief until the integration audit determines the correct application base and ChatGPT issues a revised brief.
-- After integration, reissue Step 4C against the accepted branch/commit, with the Step 4B architectural decisions unchanged unless explicitly revised.
-
-### Step 4D — pending: backup and restore safety
-
-- Separate mission after Step 4C review.
-- Must decide and implement explicit Workspace vs full-application archive scopes.
-- ZIP v1 must not be silently restored while its scope is ambiguous.
-- No Workspace restore may delete global Clients or rows belonging to another Workspace.
-- Add full archive validation, staging, failure injection, and recovery journal/marker before authorizing restore implementation.
-
-## Accepted reservations
-
-- JSON backup generation can race under concurrent client writes; ordering/serialization needs a dedicated design.
-- Historical-data test is not a fixture from a real prior schema.
-- Initialization uniqueness is not directly instrumented.
-- Dynamic-table initialization is not covered by end-to-end fresh-install integration tests.
-- Real backup file failures are not injected.
-- `CompleteBackupService` still has a private SQLite connection and a global destructive restore path on the feature branch; it remains a high-priority unresolved risk.
-- Coordinator CloseAsync / ExitLock failure injection remains untested.
-
-## Guardrails
-
-- Never use or modify the user's real SQLite database during tests.
-- No destructive migration or restore without explicit approved policy.
-- No Workspace isolation changes in Mission 1.
-- No dynamic-engine redesign in the SQLite-centralization mission.
+- Record architectural decisions in `docs/01-architecture/DECISIONS.md` when relevant.
 - Preserve the exact UI rule: “Modifier” edits content only; pencil “✎” edits the full structure/template.
-- Do not claim that local uncommitted changes are visible through GitHub.
-- Cloud orchestration PR #4 is parked; continue the normal manual `@execute` / `@review` workflow.
+
+## Branch governance — current explicit authorization
+
+- `develop` remains the canonical application integration branch.
+- For this mission only, the owner explicitly authorizes direct implementation commits on the existing `integration/reconcile-feature-branches` branch.
+- PR #5 is the authorized path for integrating that branch into `develop` after the mission's validation criteria are satisfied.
+- Do not create another implementation branch for this mission.
+- Do not push directly to `develop`; use PR #5 and a normal merge commit after verifying all required criteria.
+- No merge/rebase/cherry-pick/reset/force-push/branch deletion except the explicitly authorized final merge of PR #5 when its conditions are met.
+- Never use or modify the user's real SQLite database during tests.
+- Preserve the protected worktree `feature/block-instances-fix` and its pre-existing local `UltimateManager.csproj` diff.
+- Cloud orchestration PR #4 remains parked.

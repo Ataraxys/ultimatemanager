@@ -6,9 +6,10 @@ using UltimateManager.Services;
 
 namespace UltimateManager.ViewModels;
 
-public partial class ClientsViewModel(IClientService clientService) : ObservableObject
+public partial class ClientsViewModel(IClientService clientService, IDynamicFormService dynamicFormService) : ObservableObject
 {
     private readonly IClientService _clientService = clientService;
+    private readonly IDynamicFormService _dynamicFormService = dynamicFormService;
     private CancellationTokenSource? _searchCancellation;
 
     public ObservableCollection<Client> Clients { get; } = [];
@@ -78,6 +79,7 @@ public partial class ClientsViewModel(IClientService clientService) : Observable
         try
         {
             IsLoading = true;
+            await _dynamicFormService.EnsureDefaultClientTemplateAsync();
             var clients = await _clientService.GetAllAsync();
             ReplaceClients(clients);
         }
