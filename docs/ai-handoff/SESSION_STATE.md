@@ -1,6 +1,15 @@
 # UltimateManager — AI Session State
 
-Last updated: 2026-11-23
+Last updated: 2026-11-24
+
+## Latest feature correction review — 2026-11-24
+
+- Mission: block label editing / recently added dynamic blocks.
+- Independent review: `docs/ai-handoff/outbox/20261124_MISSION-BLOCK-LABEL-EDITING_CHATGPT-REVIEW.md`.
+- Verdict: **REQUEST CHANGES**. The service-level correction is promising, but the MAUI UI was not manually validated, the block-instance reconciliation is not concurrency-safe as written, and the agent placed application code on a report-only branch.
+- Reported code commit: `1ae541ba86a77eaebac581114f06f008c8e7ea8d`, currently on `ai-handoff/report-block-label-editing`. Do not merge this branch or treat it as a report-only branch.
+- Starting feature SHA reported by the agent: `2bbcd1b35c9481794e5d4f9be379e8fb486c4560`.
+- Next step: targeted correction/revalidation on an authorized implementation branch, with backend support for safe reconciliation, real UI validation, and a report-only branch based on current `develop`. No merge authorized.
 
 ## Collaboration model
 
