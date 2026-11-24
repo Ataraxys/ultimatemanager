@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:viewModels="clr-namespace:UltimateManager.ViewModels"
+             x:Class="UltimateManager.Views.TemplateEditorPage"
+             x:DataType="viewModels:TemplateEditorViewModel"
+             Title="Personnaliser le modèle">
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="+ Bloc" Clicked="OnAddBlockClicked" />
+        <ToolbarItem Text="Sauvegarder comme modèle" Clicked="OnSaveAsTemplateClicked" />
+    </ContentPage.ToolbarItems>
+    <ScrollView>
+        <VerticalStackLayout Padding="20,16,20,28" Spacing="16">
+            <Label Text="{Binding TemplateName}"
+                   FontFamily="OpenSansSemibold"
+                   FontSize="26" />
+            <Label Text="Organisez les blocs et les champs de cette fiche."
+                   TextColor="{StaticResource Gray500}" />
+            <VerticalStackLayout BindableLayout.ItemsSource="{Binding Blocks}"
+                                 Spacing="14">
+                <BindableLayout.ItemTemplate>
+                    <DataTemplate x:DataType="viewModels:TemplateBlockEditorItem">
+                        <Border Padding="14"
+                                Stroke="{StaticResource Gray200}"
+                                StrokeShape="RoundRectangle 16">
+                            <VerticalStackLayout Spacing="10">
+                                <Grid ColumnDefinitions="*,Auto,Auto,Auto"
+                                      ColumnSpacing="6">
+                                    <Entry Text="{Binding Name}"
+                                           Completed="OnBlockNameCompleted"
+                                            Unfocused="OnBlockNameUnfocused"
+                                           ReturnType="Done" />
+                                    <Button Grid.Column="1"
+                                            Text="↑"
+                                            Clicked="OnMoveBlockUpClicked"
+                                            Padding="8,0" />
+                                    <Button Grid.Column="2"
+                                            Text="↓"
+                                            Clicked="OnMoveBlockDownClicked"
+                                            Padding="8,0" />
+                                    <Button Grid.Column="3"
+                                            Text="Suppr."
+                                            Clicked="OnDeleteBlockClicked"
+                                            Padding="8,0"
+                                            TextColor="#C62828" />
+                                </Grid>
+                                <Button Text="+ Ajouter un élément"
+                                        Clicked="OnAddFieldClicked"
+                                        HorizontalOptions="Start" />
+                                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Fields}"
+                                                     Spacing="6">
+                                    <BindableLayout.ItemTemplate>
+                                        <DataTemplate x:DataType="viewModels:TemplateFieldEditorItem">
+                                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto"
+                                                  ColumnSpacing="5">
+                                                <Entry Text="{Binding Label}"
+                                                       Completed="OnFieldNameCompleted"
+                                                       Unfocused="OnFieldNameUnfocused"
+                                                       ReturnType="Done" />
+                                                <Button Grid.Column="1"
+                                                        Text="{Binding FieldType}"
+                                                        Clicked="OnChangeFieldTypeClicked"
+                                                        FontSize="12"
+                                                        Padding="4,0"
+                                                        TextColor="{StaticResource Gray500}"
+                                                        VerticalOptions="Center" />
+                                                <Button Grid.Column="2"
+                                                        Text="↑"
+                                                        Clicked="OnMoveFieldUpClicked"
+                                                        Padding="6,0" />
+                                                <Button Grid.Column="3"
+                                                        Text="↓"
+                                                        Clicked="OnMoveFieldDownClicked"
+                                                        Padding="6,0" />
+                                                <Button Grid.Column="4"
+                                                        Text="Suppr."
+                                                        Clicked="OnDeleteFieldClicked"
+                                                        Padding="6,0"
+                                                        TextColor="#C62828" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </VerticalStackLayout>
+                            </VerticalStackLayout>
+                        </Border>
+                    </DataTemplate>
+                </BindableLayout.ItemTemplate>
+            </VerticalStackLayout>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

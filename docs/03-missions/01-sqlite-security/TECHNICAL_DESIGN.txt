@@ -1,0 +1,711 @@
+CONCEPTION TECHNIQUE DETAILLEE — MISSION 1
+
+Mission : Sécurisation SQLite, migrations et sauvegardes
+Statut : conception révisée uniquement — aucune implémentation réalisée.
+
+Cette version remplace la conception précédente après vérification du code et des artefacts locaux de sqlite-net-pcl 1.11.285.
+
+
+1. CONSTATS VERIFIES DANS LE CODE
+=================================
+
+Quatre services créent actuellement chacun une SQLiteAsyncConnection vers le même fichier ultimate-manager.db3 :
+
+- Services/SqliteClientService.cs
+- Services/SqliteDynamicFormService.cs
+- Services/LocalWorkspaceContext.cs
+- Services/CompleteBackupService.cs
+
+Les quatre services lancent aussi leur initialisation depuis leur constructeur. Les tables sont donc créées depuis plusieurs points d’entrée.
+
+Le code actuel ne contient :
+
+- aucun RunInTransaction ou RunInTransactionAsync ;
+- aucun réglage PRAGMA journal_mode ;
+- aucun réglage WAL explicite ;
+- aucun checkpoint explicite ;
+- aucun appel BackupAsync ;
+- aucune stratégie centrale de verrouillage ;
+- aucune migration versionnée centralisée.
+
+CompleteBackupService :
+
+- lit l’archive et les JSON ;
+- modifie le Workspace avant la reconstruction ;
+- exécute ensuite des DELETE globaux sur FieldValues, BlockInstances, EntityRecords, FieldDefinitions, BlockDefinitions, EntityTemplates et Clients ;
+- insère les données une par une ;
+- écrit directement les pièces jointes dans FileSystem.AppDataDirectory/documents ;
+- ignore une pièce jointe d’archive absente au lieu d’échouer.
+
+SqliteDynamicFormService réalise également plusieurs écritures liées sans transaction, notamment le clonage, la création de structures et les suppressions de templates.
+
+Client ne possède pas WorkspaceId. La restauration par Workspace des clients reste donc hors périmètre de la Mission 1.
+
+La référence de package présente dans UltimateManager.csproj est sqlite-net-pcl 1.11.285. Aucun package ne doit être ajouté ou mis à jour.
+
+
+2. COMPOSANTS CONSERVES ET SUPPRIMES
+====================================
+
+Composants conservés :
+
+1. SQLiteDatabaseCoordinator
+   Propriétaire central de la connexion, de l’initialisation, du verrou d’écriture et de l’accès transactionnel.
+
+2. SchemaMigrationRunner
+   Seul composant responsable de la lecture de version et de l’application des migrations.
+
+3. RestoreCoordinator
+   Seul orchestrateur responsable de la restauration, du staging, du journal et de la reprise.
+
+Composants supprimés de la conception :
+
+- SQLiteTransactionExecutor : aucune responsabilité indépendante suffisante. Les transactions sont une capacité du coordinateur central.
+- PreMigrationBackupService : aucune responsabilité indépendante obligatoire au premier incrément. La sauvegarde pré-migration est une étape contrôlée par le coordinateur avant l’appel au runner.
+- BackupArchiveValidator séparé : au premier incrément, la validation fait partie de RestoreCoordinator avant toute écriture.
+- AttachmentStagingStore séparé : au premier incrément, le staging est une responsabilité interne limitée de RestoreCoordinator.
+- RestoreJournalStore séparé : au premier incrément, le journal est un fichier JSON durable géré par RestoreCoordinator.
+
+Ces séparations pourront être réintroduites uniquement si la taille ou les tests démontrent une responsabilité indépendante réelle.
+
+
+3. SQLiteDatabaseCoordinator
+============================
+
+Nom : SQLiteDatabaseCoordinator
+Fichier proposé : Services/SQLiteDatabaseCoordinator.cs
+Interface réellement nécessaire : Services/ISqliteDatabase.cs
+
+Responsabilités :
+
+- posséder la SQLiteAsyncConnection unique du processus ;
+- contrôler son initialisation ;
+- acquérir et libérer le verrou global d’écriture ;
+- fournir les lectures et écritures après initialisation ;
+- fournir l’accès transactionnel ;
+- créer une sauvegarde cohérente avant migration ;
+- ne contenir aucune règle métier de Client, Workspace ou formulaire.
+
+Le coordinateur est enregistré en Singleton dans MauiProgram.cs. Les services métier ne construisent plus de SQLiteAsyncConnection et ne gèrent plus de SemaphoreSlim.
+
+Interface minimale indicative :
+
+    Task InitializeAsync(CancellationToken cancellationToken = default);
+
+    Task<T> ReadAsync<T>(
+        Func<SQLiteAsyncConnection, Task<T>> operation,
+        CancellationToken cancellationToken = default);
+
+    Task ExecuteWriteAsync(
+        Func<SQLiteAsyncConnection, Task> operation,
+        CancellationToken cancellationToken = default);
+
+    Task<T> ExecuteWriteAsync<T>(
+        Func<SQLiteAsyncConnection, Task<T>> operation,
+        CancellationToken cancellationToken = default);
+
+    Task ExecuteTransactionAsync(
+        Action<SQLiteConnection> operation,
+        CancellationToken cancellationToken = default);
+
+    Task<string> CreateBackupAsync(
+        string destinationPath,
+        CancellationToken cancellationToken = default);
+
+Cette interface est un contrat technique limité. Elle ne doit pas devenir un repository générique ni exposer les modèles métier.
+
+Fichiers existants à modifier :
+
+- MauiProgram.cs
+- Services/SqliteClientService.cs
+- Services/SqliteDynamicFormService.cs
+- Services/LocalWorkspaceContext.cs
+- Services/CompleteBackupService.cs
+
+Nouveaux fichiers :
+
+- Services/ISqliteDatabase.cs
+- Services/SQLiteDatabaseCoordinator.cs
+
+
+4. CONNEXION, INITIALISATION ET CONCURRENCE
+===========================================
+
+API vérifiées dans sqlite-net-pcl 1.11.285 :
+
+- SQLiteAsyncConnection possède RunInTransactionAsync(Action<SQLiteConnection>) ;
+- SQLiteAsyncConnection possède BackupAsync(string destinationDatabasePath, string databaseName) ;
+- SQLiteAsyncConnection possède CloseAsync() ;
+- SQLiteConnection possède RunInTransaction(Action) ;
+- SQLiteConnectionWithLock possède Lock() et le verrou retourné est libéré par Dispose ;
+- SQLiteConnection possède BusyTimeout ;
+- SQLiteConnection et SQLiteAsyncConnection acceptent SQLiteConnectionString ;
+- SQLiteConnectionString permet de définir les OpenFlags, les actions de connexion et le VFS.
+
+Le dépôt ne configure actuellement aucun PRAGMA ni journal WAL. Le mode de journalisation effectif n’est donc pas une fonctionnalité vérifiée de l’application. Il doit être lu sur la base de test et non supposé.
+
+Initialisation :
+
+- utiliser un Lazy<Task> avec ExecutionAndPublication dans le coordinateur ;
+- tous les services attendent la même tâche ;
+- le CancellationToken annule l’attente de l’appelant via WaitAsync, mais ne doit pas annuler arbitrairement l’initialisation partagée ;
+- l’initialisation acquiert le verrou global avant de créer SchemaInfo et d’exécuter les migrations.
+
+Séquence :
+
+1. calculer le chemin de base ;
+2. construire la connexion unique ;
+3. lire et journaliser le mode de journalisation réel via PRAGMA journal_mode ;
+4. acquérir le verrou ;
+5. créer ou vérifier SchemaInfo ;
+6. créer la sauvegarde pré-migration si une migration est nécessaire ;
+7. appeler SchemaMigrationRunner ;
+8. vérifier les tables et colonnes attendues ;
+9. libérer le verrou.
+
+Les constructeurs des quatre services ne doivent plus démarrer leur propre InitializeAsync.
+
+Accès concurrent :
+
+- les opérations de lecture passent par le coordinateur et attendent l’initialisation ;
+- les écritures passent par ExecuteWriteAsync ;
+- les transactions passent par ExecuteTransactionAsync ;
+- la restauration et les migrations utilisent le même verrou global ;
+- aucune connexion ou transaction n’est créée directement dans un service métier.
+
+Le premier incrément utilise un SemaphoreSlim global dans le coordinateur. Le verrou est toujours libéré dans finally. Le BusyTimeout est un filet de sécurité SQLite et ne remplace pas le verrou applicatif.
+
+
+5. TRANSACTIONS AVEC SQLITE-NET-PCL 1.11.285
+============================================
+
+La compatibilité est confirmée : SQLiteAsyncConnection expose RunInTransactionAsync(Action<SQLiteConnection>), et SQLiteConnection expose RunInTransaction(Action).
+
+La stratégie retenue est d’utiliser RunInTransactionAsync du coordinateur pour les opérations multi-écritures. Le callback reçoit une SQLiteConnection et utilise les opérations synchrones de cette connexion :
+
+    await connection.RunInTransactionAsync(transaction =>
+    {
+        transaction.Insert(parent);
+        transaction.Insert(child);
+    });
+
+Il ne faut pas appeler InsertAsync, UpdateAsync ou DeleteAsync dans le callback synchrone. La transaction est annulée si le callback lève une exception. La documentation XML du package indique également que RunInTransactionAsync utilise un SAVEPOINT pour les transactions imbriquées et relance l’exception après rollback.
+
+Opérations à migrer :
+
+- SqliteDynamicFormService : création d’un record et de ses blocs ; clonage de template ; création du template par défaut ; suppression d’un template avec ses blocs/champs ; opérations multi-tables de structure ;
+- CompleteBackupService : insertion coordonnée d’un jeu restauré, sans DELETE global ;
+- SchemaMigrationRunner : application d’une migration et enregistrement de sa version selon une stratégie cohérente.
+
+Les opérations métier simples peuvent continuer à utiliser les méthodes asynchrones via le coordinateur.
+
+La transaction SQLite ne couvre pas les fichiers physiques, les fichiers JSON legacy ni Share.Default. Elle doit donc être combinée à RestoreCoordinator et à son journal.
+
+
+6. SchemaMigrationRunner
+========================
+
+Nom : SchemaMigrationRunner
+Fichiers proposés :
+
+- Services/IMigrationRunner.cs
+- Services/SchemaMigrationRunner.cs
+- Services/ISchemaMigration.cs
+- Services/SchemaInfo.cs
+- Services/Migrations/InitialSchemaMigration.cs
+- Services/Migrations/AddWorkspaceDefaultTemplateIdMigration.cs
+- Services/Migrations/AddEntityRecordExternalEntityIdMigration.cs
+
+Responsabilité unique :
+
+- lire SchemaInfo ;
+- refuser une version supérieure non supportée ;
+- appliquer les migrations dans l’ordre ;
+- vérifier chaque résultat ;
+- inscrire la version uniquement après succès ;
+- ne jamais ignorer une SQLiteException sans diagnostic.
+
+SchemaInfo :
+
+    SchemaInfo
+    ----------
+    Id
+    Version
+    AppliedAt
+
+Migrations à formaliser :
+
+- schéma initial avec les tables actuellement créées ;
+- ajout de Workspaces.DefaultTemplateId ;
+- ajout de EntityRecords.ExternalEntityId.
+
+Scénarios de migration des bases existantes :
+
+1. Base neuve
+
+- SchemaInfo n’existe pas et aucune table métier n’existe ;
+- créer SchemaInfo dans le cadre de l’initialisation ;
+- appliquer la migration du schéma initial ;
+- appliquer ensuite les migrations suivantes dans l’ordre ;
+- enregistrer la version finale uniquement après vérification des tables et colonnes.
+
+2. Base existante sans SchemaInfo
+
+- inspecter les tables et colonnes présentes avant toute création ou modification ;
+- reconnaître le schéma historique attendu à partir de Clients, Workspaces, EntityTemplates, BlockDefinitions, FieldDefinitions, EntityRecords, BlockInstances et FieldValues ;
+- comparer les colonnes attendues, notamment Workspaces.DefaultTemplateId et EntityRecords.ExternalEntityId ;
+- créer une sauvegarde via BackupAsync(destinationPath, "main") avant toute évolution ;
+- créer SchemaInfo avec la version historique détectée, sans réinitialiser les tables ;
+- appliquer uniquement les migrations manquantes ;
+- refuser la migration si le schéma ne correspond pas à un état connu.
+
+3. Base existante avec SchemaInfo
+
+- lire la version enregistrée ;
+- vérifier que les tables et colonnes correspondant à cette version existent réellement ;
+- si la version est inférieure à la version courante, créer la sauvegarde puis appliquer les migrations manquantes ;
+- si la version est égale, ne rien réappliquer et effectuer seulement les contrôles d’intégrité ;
+- si la version est supérieure ou incohérente avec les tables, arrêter l’initialisation et préserver la base.
+
+4. Base partiellement migrée ou incohérente
+
+- ne jamais déduire qu’une migration est terminée uniquement d’une colonne ou d’une table partiellement créée ;
+- comparer SchemaInfo, tables, colonnes et invariants attendus ;
+- créer une sauvegarde avant toute tentative de reprise ;
+- si l’état correspond à un point de reprise explicitement reconnu, reprendre la migration idempotente ;
+- sinon refuser l’initialisation avec une erreur diagnostiquée et conserver la base inchangée ;
+- ne jamais supprimer les tables, recréer le schéma ou remettre la version à zéro automatiquement.
+
+La migration initiale est donc une migration de reconnaissance et de préservation pour une base existante, et une migration de création uniquement pour une base réellement neuve. Elle ne doit jamais appeler CreateTableAsync comme moyen de réinitialiser une base existante ni exécuter de DELETE de données métier.
+
+La détection historique doit être testée sur des copies de bases représentatives. Si le schéma observé ne permet pas de distinguer de manière fiable une base neuve d’une base historique partielle, la migration est bloquée et nécessite une validation humaine.
+
+Le runner ne connaît ni les Workspaces actifs, ni les archives ZIP, ni les pièces jointes. Il est appelé par SQLiteDatabaseCoordinator.
+
+Tests :
+
+- base neuve ;
+- base existante ;
+- migration intermédiaire ;
+- migration qui échoue ;
+- relance après échec ;
+- deux initialisations concurrentes ;
+- sauvegarde vérifiée avant migration.
+
+
+7. SAUVEGARDE PRE-MIGRATION
+===========================
+
+Il n’y a pas de PreMigrationBackupService autonome dans la version révisée.
+
+SQLiteDatabaseCoordinator utilise l’API vérifiée SQLiteAsyncConnection.BackupAsync(destinationDatabasePath, databaseName) pour créer une copie cohérente de la base avant toute migration. Cette API est documentée par sqlite-net-pcl 1.11.285 comme sauvegardant la base entière vers le chemin destination.
+
+Séquence minimale :
+
+1. acquérir le verrou global ;
+2. déterminer la version de schéma ;
+3. si aucune migration n’est nécessaire, ne pas créer de sauvegarde pré-migration ;
+4. créer un fichier temporaire de destination avec un Guid ;
+5. appeler BackupAsync(destinationPath, "main") ;
+6. vérifier que le fichier existe et peut être ouvert en lecture ;
+7. écrire un manifeste avec Guid, version avant migration, date UTC, taille et empreinte ;
+8. conserver la sauvegarde ;
+9. seulement ensuite appeler SchemaMigrationRunner.
+
+La copie physique brute du fichier .db3 n’est pas utilisée. BackupAsync est préféré car il passe par le mécanisme SQLite et constitue la capacité disponible vérifiée dans le package.
+
+Signature confirmée par réflexion sur SQLite-net.dll et par la documentation XML locale :
+
+    Task BackupAsync(string destinationDatabasePath, string databaseName)
+
+L’appel correct est donc :
+
+    await connection.BackupAsync(destinationPath, "main");
+
+Le premier argument est le chemin de destination et le second est le nom de la base SQLite, généralement "main". Aucun appel BackupAsync("main", destinationPath) n’est correct.
+
+WAL :
+
+- le projet ne force pas WAL ;
+- le mode effectif doit être lu avec PRAGMA journal_mode sur la base de test et de développement ;
+- BackupAsync est la stratégie de sauvegarde retenue indépendamment du mode journal ;
+- aucun checkpoint manuel n’est proposé au premier incrément car aucune API checkpoint dédiée n’a été trouvée dans la surface publique inspectée ;
+- si une exigence impose une copie physique ou une maîtrise du WAL, elle nécessite une validation humaine et un test sur chaque plateforme MAUI.
+
+Fermeture :
+
+SQLiteAsyncConnection.CloseAsync existe et ferme les connexions poolées utilisées par la base. Il ne doit pas être appelé pendant l’usage normal du Singleton. Il est réservé à une séquence explicitement coordonnée de maintenance ou aux tests, après acquisition du verrou et arrêt des opérations.
+
+Fichiers à modifier :
+
+- SQLiteDatabaseCoordinator.cs ;
+- SchemaMigrationRunner.cs si le manifeste est préparé par le runner.
+
+Aucun service séparé obligatoire au premier incrément.
+
+
+8. RESTORECOORDINATOR — RESTAURATION MINIMALE ET SURE
+======================================================
+
+Nom : RestoreCoordinator
+Fichier proposé : Services/RestoreCoordinator.cs
+Interface nouvelle non nécessaire au premier incrément : ICompleteBackupService reste le contrat public existant.
+
+Responsabilité unique : orchestrer la restauration et ses phases externes à SQLite.
+
+Le coordinateur central SQLite est injecté dans RestoreCoordinator. Aucun accès direct à SQLite n’est conservé dans l’orchestrateur de restauration.
+
+Première version minimale :
+
+- validation complète de tous les JSON et de toutes les références avant modification ;
+- refus d’une archive dont une pièce jointe référencée est absente ;
+- extraction de toutes les pièces jointes dans restore-staging/{operationId} ;
+- vérification des tailles, chemins et empreintes disponibles ;
+- conservation intégrale des données et pièces jointes existantes ;
+- transaction SQLite pour les écritures multi-tables ;
+- journal JSON durable dans le répertoire de staging ;
+- finalisation uniquement après commit SQLite ;
+- nettoyage différé après état Completed et vérification ;
+- aucune suppression globale ni suppression des anciennes pièces jointes en cas d’échec.
+
+Le premier incrément ne tente pas de fournir :
+
+- une synchronisation distribuée ;
+- une restauration atomique SQLite/système de fichiers ;
+- une fusion automatique de données existantes ;
+- une suppression ou un remplacement destructif des données existantes ;
+- un système générique de provider de fichiers.
+
+Etats minimaux du journal :
+
+- Created
+- Validated
+- Staged
+- DatabaseCommitted
+- FilesFinalizing
+- Completed
+- Failed
+- RecoveryRequired
+
+Contenu minimal :
+
+- OperationId ;
+- date UTC ;
+- WorkspaceId demandé ;
+- état ;
+- chemin de staging ;
+- archive source ;
+- liste des fichiers attendus et finalisés ;
+- erreur éventuelle.
+
+Séquence :
+
+1. acquérir le verrou global ;
+2. créer OperationId et le journal Created ;
+3. lire l’archive sans modifier SQLite ;
+4. valider tous les JSON, identifiants, relations et pièces jointes ;
+5. écrire Validated ;
+6. extraire vers staging ;
+7. vérifier staging et écrire Staged ;
+8. exécuter la transaction SQLite sans DELETE global ;
+9. écrire DatabaseCommitted ;
+10. déplacer ou copier les fichiers staging de manière contrôlée et idempotente ;
+11. écrire FilesFinalizing puis Completed ;
+12. conserver l’ancien état jusqu’au nettoyage différé vérifié.
+
+En cas d’erreur avant DatabaseCommitted :
+
+- rollback SQLite automatique si une transaction est ouverte ;
+- suppression du seul staging de l’opération ;
+- état actif inchangé.
+
+En cas d’erreur après DatabaseCommitted :
+
+- conserver le staging et le journal ;
+- écrire RecoveryRequired ;
+- reprendre la finalisation au prochain démarrage ou via une commande contrôlée ;
+- ne supprimer aucune ancienne pièce jointe.
+
+La restauration des Clients reste limitée par l’absence de Client.WorkspaceId. La Mission 1 ne prétend donc pas assurer l’isolation des contacts.
+
+Conflits d’identifiants :
+
+- avant toute écriture, valider les identifiants de Workspace, templates, blocs, champs, records, instances, valeurs et clients présents dans l’archive ;
+- si un identifiant importé n’existe pas dans la base cible, l’insérer ;
+- si un identifiant importé existe déjà, refuser explicitement toute la restauration ;
+- ne pas fusionner automatiquement les objets ;
+- ne pas remplacer automatiquement les lignes existantes ;
+- ne pas supprimer la ligne existante pour permettre l’insertion ;
+- ne pas remapper silencieusement les Guid, car cela modifierait les références et rendrait la restauration non transparente.
+
+La validation des conflits doit être terminée avant le staging final et avant toute transaction SQLite. Un conflit produit un journal Failed ou RecoveryRequired selon la phase, mais ne modifie pas les données existantes.
+
+Association des pièces jointes :
+
+- le chemin présent dans DocumentValue.FilePath lors de l’export est un nom d’entrée relatif à l’archive, par exemple attachments/{nom-ou-guid} ;
+- l’archive est validée par correspondance exacte entre chaque entrée référencée et le manifeste ;
+- le staging utilise restore-staging/{operationId}/attachments/{stagedFileId} ;
+- le journal conserve la relation entre le chemin d’archive, le Guid de fichier staging, le chemin final prévu et l’empreinte ;
+- les valeurs SQLite restaurées ne doivent référencer un fichier actif qu’après finalisation réussie ;
+- la reprise utilise le journal et les empreintes pour ne pas recopier ou remplacer un fichier déjà finalisé.
+
+Si SQLite est validé mais que la finalisation physique échoue :
+
+- conserver les fichiers de staging et le journal ;
+- marquer l’opération RecoveryRequired ;
+- ne supprimer aucune ancienne pièce jointe ni donnée existante ;
+- reprendre la finalisation fichier par fichier après redémarrage ou action contrôlée ;
+- si la reprise est impossible, produire un rapport d’erreur et conserver le staging pour récupération manuelle ;
+- ne pas déclarer Completed et ne pas lancer le nettoyage différé.
+
+Fichiers existants à modifier :
+
+- Services/CompleteBackupService.cs ;
+- Services/ICompleteBackupService.cs uniquement si nécessaire ;
+- MauiProgram.cs.
+
+Nouveau fichier :
+
+- Services/RestoreCoordinator.cs.
+
+Les objets de journal, manifestes et staging peuvent rester internes à RestoreCoordinator au premier incrément. Ils ne deviennent des classes séparées qu’en cas de besoin démontré par les tests.
+
+
+9. SERVICES METIER ET SECURITE DES ACCES
+========================================
+
+Services modifiés :
+
+- SqliteClientService conserve le CRUD Client et délègue tout accès au coordinateur ;
+- SqliteDynamicFormService conserve les règles de templates, blocs, champs et records et délègue l’accès SQLite ;
+- LocalWorkspaceContext conserve la sélection du Workspace et délègue la persistance ;
+- CompleteBackupService conserve l’API appelée par l’interface et délègue l’orchestration de restauration.
+
+Aucun de ces services ne doit :
+
+- instancier SQLiteAsyncConnection ;
+- appeler directement SQLiteConnectionPool ;
+- créer son propre SemaphoreSlim ;
+- appliquer une migration ;
+- exécuter des DELETE globaux pour restaurer une archive ;
+- modifier des pièces jointes actives avant validation et staging.
+
+Attention aux contournements :
+
+- l’interface ISqliteDatabase ne doit pas exposer une connexion utilisable hors de ses méthodes contrôlées ;
+- les callbacks ReadAsync et ExecuteWriteAsync sont internes aux services et doivent être courts ;
+- les transactions ne doivent pas appeler à nouveau une méthode métier qui réacquiert le verrou ;
+- les opérations de sauvegarde et restauration doivent être exécutées sous le verrou global ;
+- le Singleton doit être le seul enregistrement de la coordination SQLite dans MauiProgram.
+
+
+10. TESTS D’INTEGRATION SQLITE
+=============================
+
+Aucun projet de test ni framework n’est présent actuellement. Les tests restent donc planifiés et doivent être classés Bloqués tant que le prérequis n’est pas satisfait.
+
+Tests à créer lorsque le projet de test sera autorisé :
+
+SQLiteInitializationTests :
+
+- DB-001 initialisation séquentielle ;
+- DB-002 initialisation concurrente ;
+- DB-003 base à la dernière version ;
+- DB-004 migration intermédiaire ;
+- DB-005 migration échouée ;
+- DB-006 reprise après interruption ;
+- lecture réelle de PRAGMA journal_mode.
+
+SQLiteTransactionTests :
+
+- TX-001 écritures simultanées ;
+- TX-002 parent et enfants ;
+- TX-003 rollback ;
+- TX-004 lecture pendant écriture ;
+- TX-005 opérations incompatibles ;
+- TX-006 réutilisation après erreur.
+
+MigrationBackupTests :
+
+- BackupAsync produit une copie lisible ;
+- la copie contient les données avant migration ;
+- une migration n’est pas lancée si BackupAsync échoue ;
+- un fichier temporaire incomplet n’est jamais déclaré comme sauvegarde valide ;
+- mode journal réel consigné dans la preuve.
+
+RestoreCoordinatorTests :
+
+- archive invalide sans modification SQLite ;
+- pièce jointe manquante sans modification SQLite ;
+- staging valide ;
+- erreur avant commit ;
+- erreur après commit et état RecoveryRequired ;
+- reprise idempotente ;
+- anciennes données et anciennes pièces jointes conservées ;
+- deux restaurations concurrentes ordonnées ou refusées.
+
+DataConservationTests :
+
+- données hors périmètre conservées ;
+- valeurs conservées ;
+- orphelins signalés mais non supprimés ;
+- absence de DELETE global pendant une restauration.
+
+Les résultats doivent être classés Passant, Échouant ou Bloqué avec commande et preuve.
+
+
+11. FICHIERS A MODIFIER ET A CREER
+==================================
+
+Fichiers existants à modifier :
+
+- MauiProgram.cs ;
+- Services/SqliteClientService.cs ;
+- Services/SqliteDynamicFormService.cs ;
+- Services/LocalWorkspaceContext.cs ;
+- Services/CompleteBackupService.cs ;
+- Services/ICompleteBackupService.cs uniquement si nécessaire.
+
+Nouveaux fichiers minimaux :
+
+- Services/ISqliteDatabase.cs ;
+- Services/SQLiteDatabaseCoordinator.cs ;
+- Services/IMigrationRunner.cs ;
+- Services/ISchemaMigration.cs ;
+- Services/SchemaMigrationRunner.cs ;
+- Services/SchemaInfo.cs ;
+- Services/Migrations/InitialSchemaMigration.cs ;
+- Services/Migrations/AddWorkspaceDefaultTemplateIdMigration.cs ;
+- Services/Migrations/AddEntityRecordExternalEntityIdMigration.cs ;
+- Services/RestoreCoordinator.cs.
+
+Aucun fichier de test ne peut être considéré comme existant : aucun projet de test actuel n’a été trouvé.
+
+Aucun fichier séparé n’est créé au premier incrément pour :
+
+- SQLiteTransactionExecutor ;
+- PreMigrationBackupService ;
+- BackupArchiveValidator ;
+- AttachmentStagingStore ;
+- RestoreJournalStore.
+
+
+12. ORDRE D’IMPLEMENTATION REVISE
+=================================
+
+Chaque étape doit compiler, être testée avec les moyens disponibles et être validée avant la suivante.
+
+Etape 1 — Vérifier les API SQLite et le mode de journalisation
+
+- confirmer l’API RunInTransactionAsync déjà présente ;
+- confirmer BackupAsync et CloseAsync ;
+- exécuter PRAGMA journal_mode sur une copie de base de test ;
+- vérifier la présence éventuelle de -wal et -shm ;
+- documenter le résultat par plateforme ;
+- ne modifier aucun code.
+
+Etape 2 — Infrastructure SQLite minimale
+
+- créer ISqliteDatabase et SQLiteDatabaseCoordinator ;
+- créer une SQLiteAsyncConnection unique ;
+- ajouter Lazy<Task> ;
+- ajouter SemaphoreSlim global ;
+- ajouter ReadAsync, ExecuteWriteAsync et ExecuteTransactionAsync ;
+- enregistrer le Singleton ;
+- tester l’initialisation et une lecture simple.
+
+Etape 3 — Migrations versionnées et tests sur copie
+
+- créer SchemaInfo et SchemaMigrationRunner ;
+- créer les migrations nommées ;
+- créer une copie via BackupAsync avant migration ;
+- tester base neuve, base existante, migration échouée et relance ;
+- vérifier la copie avant/après migration.
+
+Etape 4 — Migration des services existants
+
+- injecter ISqliteDatabase dans SqliteClientService ;
+- injecter ISqliteDatabase dans SqliteDynamicFormService ;
+- injecter ISqliteDatabase dans LocalWorkspaceContext ;
+- injecter ISqliteDatabase dans CompleteBackupService ;
+- supprimer les connexions et initialisations locales ;
+- tester que les services ne contournent plus le coordinateur.
+
+Etape 5 — Transactions des opérations multi-tables
+
+- migrer d’abord une opération simple de record et blocs ;
+- ajouter clonage et template par défaut ;
+- migrer suppressions et autres écritures liées ;
+- tester commit, rollback et concurrence.
+
+Etape 6 — Sauvegarde pré-migration
+
+- intégrer BackupAsync dans le coordinateur ;
+- produire un manifeste minimal ;
+- refuser la migration si la sauvegarde échoue ;
+- tester sur copie et vérifier les données sauvegardées.
+
+Etape 7 — Validation d’archives et staging
+
+- ajouter la validation complète dans RestoreCoordinator ;
+- créer le staging par OperationId ;
+- refuser les archives invalides ou incomplètes ;
+- tester sans aucune modification de l’état actif.
+
+Etape 8 — Journal de restauration et reprise
+
+- écrire le journal JSON durable ;
+- ajouter les états minimaux ;
+- reprendre une finalisation interrompue ;
+- tester l’idempotence et la conservation des anciennes pièces jointes.
+
+Etape 9 — Suppression de l’ancienne restauration destructive
+
+- remplacer les DELETE globaux de CompleteBackupService ;
+- appeler RestoreCoordinator ;
+- conserver l’ancien état en cas d’échec ;
+- tester la restauration valide et les erreurs avant/après commit.
+
+Etape 10 — Exécution de l’ensemble des tests
+
+- exécuter les tests disponibles ;
+- distinguer Passants, Échouants et Bloqués ;
+- renseigner IMPLEMENTATION_REPORT.md uniquement avec des résultats réels ;
+- ne pas déclarer la mission terminée sans preuve.
+
+
+13. RISQUES NON RESOLUS
+=======================
+
+- Le mode de journalisation actuel n’est pas configuré dans le code et doit être mesuré sur les bases réelles.
+- Le résultat de PRAGMA journal_mode peut dépendre de la plateforme et de la base ouverte.
+- BackupAsync est disponible dans le package, mais sa validation sur Android, iOS, MacCatalyst et Windows reste à effectuer.
+- Aucun checkpoint public dédié n’a été identifié dans la surface inspectée ; la stratégie ne doit donc pas en dépendre au premier incrément.
+- CloseAsync ferme les connexions poolées, mais son usage en maintenance doit être testé avec le Singleton et les appels concurrents.
+- Le comportement précis des accès concurrents doit être testé sur les plateformes cibles, même avec le verrou applicatif.
+- Le format de DocumentValue.FilePath n’est pas contractuellement défini dans le code inspecté.
+- Client ne possède pas WorkspaceId ; la restauration des contacts ne peut pas être déclarée isolée par Workspace.
+- Aucun framework ni projet de test n’est actuellement présent.
+- L’atomicité SQLite/système de fichiers reste impossible à garantir nativement.
+- La politique de conservation et de nettoyage des anciennes pièces jointes nécessite une décision produit/technique.
+
+
+14. DECISIONS NECESSITANT UNE VALIDATION HUMAINE
+================================================
+
+1. Valider que SQLiteDatabaseCoordinator est bien le seul propriétaire autorisé de SQLite.
+2. Valider l’usage d’une SQLiteAsyncConnection singleton par processus.
+3. Valider le verrou global SemaphoreSlim comme stratégie initiale de sérialisation.
+4. Valider l’utilisation de RunInTransactionAsync(Action<SQLiteConnection>) et d’opérations synchrones dans son callback.
+5. Valider la sauvegarde pré-migration via BackupAsync(destination, "main") après test sur les plateformes cibles.
+6. Valider la politique à appliquer lorsqu’une sauvegarde pré-migration échoue : migration refusée sans exception.
+7. Valider le mode de journalisation autorisé : mode existant constaté ou mode explicitement configuré plus tard.
+8. Valider la stratégie minimale de restauration sans DELETE global et sans remplacement destructif.
+9. Valider le format et l’emplacement durable du journal JSON de restauration.
+10. Valider la durée de conservation des anciennes pièces jointes et le déclencheur du nettoyage différé.
+11. Valider le comportement après crash entre commit SQLite et finalisation des fichiers.
+12. Choisir le framework et le projet de tests .NET 10.
+13. Décider si les tests doivent couvrir toutes les plateformes MAUI ou une plateforme de référence.
+14. Décider ultérieurement la stratégie de restauration des Clients après ajout de Client.WorkspaceId dans la Mission 2.
+
+Aucune implémentation, modification de code source, modification de package, modification de configuration ou modification de base de données n’est réalisée par ce document.

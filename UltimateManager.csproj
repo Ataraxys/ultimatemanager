@@ -69,6 +69,16 @@
 
 	<ItemGroup>
 	  <None Include=".github\copilot-instructions.md" />
+	  <None Include="Tests\SQLiteCoordinatorHarness\SQLiteCoordinatorHarness.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Compile Remove="Tests\**\*.cs" />
+	  <None Remove="Tests\**\*" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Compile Include="Tests\SQLiteCoordinatorHarness\ClientBackupStub.cs" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -82,6 +92,12 @@
 	<ItemGroup>
 	  <MauiXaml Update="Views\ClientEditPage.xaml" Inflator="SourceGen" />
 	  <MauiXaml Update="Views\ContactImportPage.xaml" Inflator="SourceGen" />
+	  <MauiXaml Update="Views\TemplateEditorPage.xaml">
+	    <Generator>MSBuild:Compile</Generator>
+	  </MauiXaml>
+	  <MauiXaml Update="Views\TemplatesPage.xaml">
+	    <Generator>MSBuild:Compile</Generator>
+	  </MauiXaml>
 	</ItemGroup>
 
 </Project>

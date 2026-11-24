@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+	<OutputType>Exe</OutputType>
+	<TargetFramework>net10.0</TargetFramework>
+	<ImplicitUsings>enable</ImplicitUsings>
+	<Nullable>enable</Nullable>
+	<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+	<PackageReference Include="sqlite-net-pcl" Version="1.11.285" />
+  </ItemGroup>
+
+  <ItemGroup>
+	<Compile Include="..\..\Services\ISqliteDatabase.cs" Link="Production\ISqliteDatabase.cs" />
+	<Compile Include="..\..\Services\SQLiteDatabaseCoordinator.cs" Link="Production\SQLiteDatabaseCoordinator.cs" />
+	<Compile Include="..\..\Services\IClientService.cs" Link="Production\IClientService.cs" />
+	<Compile Include="..\..\Services\IClientBackupService.cs" Link="Production\IClientBackupService.cs" />
+	<Compile Include="..\..\Services\SqliteClientService.cs" Link="Production\SqliteClientService.cs" />
+	<Compile Include="..\..\Models\Client.cs" Link="Production\Client.cs" />
+	<Compile Include="..\..\Models\DynamicForms\FieldType.cs" Link="Production\FieldType.cs" />
+	<Compile Include="..\..\Models\DynamicForms\ValueObjects.cs" Link="Production\ValueObjects.cs" />
+	<Compile Include="..\..\Models\DynamicForms\DynamicFormModels.cs" Link="Production\DynamicFormModels.cs" />
+	<Compile Include="..\..\Models\DynamicForms\DynamicFormAggregates.cs" Link="Production\DynamicFormAggregates.cs" />
+	<Compile Include="..\..\Services\IWorkspaceContext.cs" Link="Production\IWorkspaceContext.cs" />
+	<Compile Include="..\..\Services\IDynamicFormService.cs" Link="Production\IDynamicFormService.cs" />
+	<Compile Include="..\..\Services\DynamicFieldValueSerializer.cs" Link="Production\DynamicFieldValueSerializer.cs" />
+	<Compile Include="..\..\Services\SqliteDynamicFormService.cs" Link="Production\SqliteDynamicFormService.cs" />
+  </ItemGroup>
+</Project>
