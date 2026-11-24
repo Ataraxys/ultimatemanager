@@ -2,6 +2,19 @@
 
 Last updated: 2026-11-24
 
+## Current integration corrective mission — 2026-11-24
+
+- Mission: `docs/ai-handoff/outbox/20261124_CORRECTIVE-BACKUP-TEMPLATES.md`.
+- Authorized implementation branch: `integration/reconcile-feature-branches`; base `develop` remains `47b6dbf615cd62cdb9c5c0be018dda60310c826d`.
+- Source branch inspected read-only: `feature/block-instances-fix` at `bde661d52b811ab7e06278a64faf64f467354daf`; it contains `feature/add-personalisation` at `2bbcd1b35c9481794e5d4f9be379e8fb486c4560`.
+- Corrective code commit: `0618726d2ccce1a0a9c765a6d14aa08cf581bc62`; it follows integration commit `ebf1c3e4fd29aec225be1ef681defdcc7c6fecc4` carrying this mission. The current state-file update is a later documentation-only commit; see the corrective mission report for the final branch SHA.
+- `CompleteBackupService.PickAndRestoreAsync` now fails closed with `NotSupportedException` before file selection or database initialization. The destructive import path is removed. The UI restore toolbar action is disabled and the page explains that restore is temporarily unavailable. Backup creation and sharing remain enabled; safe restore is not implemented.
+- `SqliteDynamicFormService.GetTemplatesAsync` returns every template in the active Workspace, still ordered by name. A used template remains visible and reusable; another Workspace's template stays filtered out.
+- Verification on the corrective code: Android Debug build PASS (0 warnings, 0 errors); SQLite harness PASS (`failed=0`, 39 PASS, tests 16/17 NOT_TESTED); targeted tests 40/41 prove used-template availability and unchanged rows after restore refusal. Manual MAUI flow NOT TESTED (`adb` unavailable).
+- PR #5 targets `develop`, is open and draft, and has not been merged. GitHub most recently returned `mergeable=false`; re-check that status before any merge decision.
+- The user’s original `feature/block-instances-fix` worktree and pre-existing `UltimateManager.csproj` diff remain untouched. No changes were made to `develop` or feature source branches.
+- Current next step: independent review of this corrective diff. Do not merge PR #5 until the review and required product/architecture decisions are complete.
+
 ## Latest feature correction review — 2026-11-24
 
 - Mission: block label editing / recently added dynamic blocks.
@@ -59,13 +72,12 @@ Last updated: 2026-11-24
 - If a feature branch is materially divergent, run a read-only integration audit first; do not blindly merge, rebase, cherry-pick, or copy partial files.
 - After integration, verify the exact resulting `develop` SHA and the presence of prerequisites before issuing dependent work.
 
-## Next mission — integration audit of PR #3
+## Previous mission — integration audit of PR #3 (historical; superseded)
 
-- Mission: `MISSION-1-INTEGRATION-AUDIT-PR3`.
+- Mission at the time: `MISSION-1-INTEGRATION-AUDIT-PR3`.
 - Brief: `docs/ai-handoff/outbox/20261123_MISSION-1-INTEGRATION-AUDIT-PR3.md`.
 - Scope: strictly read-only audit of PR #3 / `feature/add-personalisation` against current `develop`; inventory changes, verify SQLite and UI requirements, inspect tests, identify divergence/conflicts, and propose a safe integration plan.
-- No merge, rebase, cherry-pick, branch update, code change, or push of application code is authorized.
-- Required report: complete in Codex final response and unique `.txt` under `docs/ai-handoff/inbox/`, published on a report-only branch.
+- This was historical read-only guidance from before the authorized integration mission dated 2026-11-24. The current authorized status and next step are recorded at the top of this file.
 
 ### Step 4C — paused pending integration decision
 
