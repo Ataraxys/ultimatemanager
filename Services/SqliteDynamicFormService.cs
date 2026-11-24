@@ -9,6 +9,7 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
     private readonly IWorkspaceContext _workspaceContext;
     private readonly Task _initializationTask;
     private readonly SemaphoreSlim _blockInstanceLock = new(1, 1);
+    private readonly SemaphoreSlim _recordCreationLock = new(1, 1);
 
     public SqliteDynamicFormService(IWorkspaceContext workspaceContext)
     {
@@ -509,6 +510,9 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
         CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
+        await _recordCreationLock.WaitAsync(cancellationToken);
+        try
+        {
         var existing = await _connection.Table<EntityRecord>()
             .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId &&
                              record.ExternalEntityId == externalEntityId &&
@@ -524,10 +528,6 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId &&
                              record.ExternalEntityId == externalEntityId)
             .FirstOrDefaultAsync();
-        if (previousRecord is not null)
-        {
-            await DeleteRecordDataAsync(previousRecord.Id);
-        }
 
         var template = await GetTemplateAsync(templateId, cancellationToken)
             ?? throw new InvalidOperationException("Le modèle demandé n’existe pas dans cet espace de travail.");
@@ -542,8 +542,6 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             CreatedAt = now,
             UpdatedAt = now
         };
-        await _connection.InsertAsync(record);
-
         var blocks = new List<BlockInstanceModel>(template.Blocks.Count);
         foreach (var definition in template.Blocks)
         {
@@ -555,11 +553,40 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
                 Name = definition.Block.Name,
                 DisplayOrder = definition.Block.DisplayOrder
             };
-            await _connection.InsertAsync(block);
             blocks.Add(new BlockInstanceModel { Block = block, Values = [] });
         }
 
+        // Remplacement éventuel de l'ancienne fiche + création de la nouvelle : une seule transaction.
+        await _connection.RunInTransactionAsync(connection =>
+        {
+            if (previousRecord is not null)
+            {
+                foreach (var value in connection.Table<FieldValue>().Where(item => item.EntityRecordId == previousRecord.Id).ToList())
+                {
+                    connection.Delete(value);
+                }
+
+                foreach (var oldBlock in connection.Table<BlockInstance>().Where(item => item.EntityRecordId == previousRecord.Id).ToList())
+                {
+                    connection.Delete(oldBlock);
+                }
+
+                connection.Delete<EntityRecord>(previousRecord.Id);
+            }
+
+            connection.Insert(record);
+            foreach (var model in blocks)
+            {
+                connection.Insert(model.Block);
+            }
+        });
+
         return new EntityRecordModel { Record = record, Blocks = blocks };
+        }
+        finally
+        {
+            _recordCreationLock.Release();
+        }
     }
 
     // Les blocs ajoutés au modèle après la création de la fiche n'ont pas d'instance :
@@ -634,10 +661,21 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
         }
 
         await EnsureBlockInstancesAsync(record);
-        var blocks = await _connection.Table<BlockInstance>()
+        var allBlocks = await _connection.Table<BlockInstance>()
             .Where(block => block.EntityRecordId == recordId)
             .OrderBy(block => block.DisplayOrder)
             .ToListAsync();
+        // Lecture tolérante, sans suppression : une seule instance par définition (doublons historiques
+        // ignorés, les valeurs sont rattachées aux champs) et instances orphelines écartées.
+        var definitionIds = (await _connection.Table<BlockDefinition>()
+            .Where(definition => definition.TemplateId == record.TemplateId)
+            .ToListAsync()).Select(definition => definition.Id).ToHashSet();
+        var blocks = allBlocks
+            .Where(block => definitionIds.Contains(block.BlockDefinitionId))
+            .GroupBy(block => block.BlockDefinitionId)
+            .Select(group => group.OrderBy(block => block.Id).First())
+            .OrderBy(block => block.DisplayOrder)
+            .ToList();
         var values = await _connection.Table<FieldValue>()
             .Where(value => value.EntityRecordId == recordId)
             .ToListAsync();

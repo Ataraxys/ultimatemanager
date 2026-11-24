@@ -1,4 +1,4 @@
-using SQLitePCL;
+﻿using SQLitePCL;
 using UltimateManager.Models;
 using UltimateManager.Models.DynamicForms;
 using UltimateManager.Services;
@@ -41,7 +41,10 @@ var tests = new (string Name, Func<Task> Test)[]
     ("32_EMPTY_AND_DUPLICATE_LABELS", TestEmptyAndDuplicateLabelsAsync),
     ("33_LABEL_RENAME_KEEPS_IDENTITY_AND_VALUES", TestLabelRenameKeepsValuesAsync),
     ("34_CONCURRENT_RECORD_LOADS_NO_DUPLICATE_INSTANCES", TestConcurrentRecordLoadsNoDuplicatesAsync),
-    ("35_EXISTING_INSTANCES_PRESERVED_AND_BLOCK_RENAME", TestExistingInstancesPreservedAndBlockRenameAsync)
+    ("35_EXISTING_INSTANCES_PRESERVED_AND_BLOCK_RENAME", TestExistingInstancesPreservedAndBlockRenameAsync),
+    ("36_CONCURRENT_GET_OR_CREATE_SINGLE_RECORD", TestConcurrentGetOrCreateSingleRecordAsync),
+    ("37_LEGACY_DUPLICATE_AND_ORPHAN_INSTANCES_TOLERATED", TestLegacyDuplicateAndOrphanInstancesAsync),
+    ("38_SAVE_AND_RELOAD_AFTER_RESTART", TestSaveAndReloadAfterRestartAsync)
 };
 
 var failed = 0;
@@ -722,6 +725,88 @@ static Task TestExistingInstancesPreservedAndBlockRenameAsync() => WithDynamicSe
     var template2 = await service.GetTemplateAsync(template.Template.Id);
     Assert(template2!.Blocks.Any(item => item.Block.Id == block.Id && item.Block.Name == "Bloc renommé"), "Nom de bloc non modifié ou identité changée.");
 });
+
+static Task TestConcurrentGetOrCreateSingleRecordAsync() => WithDynamicServiceAsync(async service =>
+{
+    var template = await service.CreateTemplateAsync("Fiche");
+    await service.AddBlockAsync(template.Template.Id, "A");
+    await service.AddBlockAsync(template.Template.Id, "B");
+    var externalId = Guid.NewGuid();
+    var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => service.GetOrCreateRecordAsync(externalId, template.Template.Id)));
+    Assert(results.Select(item => item.Record.Id).Distinct().Count() == 1, "Plusieurs fiches créées pour la même entité.");
+    Assert(results.All(item => item.Blocks.Count == 2), "Nombre de blocs incorrect après création concurrente.");
+    using var raw = new SQLite.SQLiteConnection(Path.Combine(FileSystem.AppDataDirectory, "ultimate-manager.db3"));
+    Assert(raw.Table<EntityRecord>().Count(item => item.ExternalEntityId == externalId) == 1, "Doublon d'EntityRecord en base.");
+    Assert(raw.Table<BlockInstance>().Count() == 2, "Doublon de BlockInstance en base.");
+});
+
+static Task TestLegacyDuplicateAndOrphanInstancesAsync() => WithDynamicServiceAsync(async service =>
+{
+    var template = await service.CreateTemplateAsync("Fiche");
+    var block = await service.AddBlockAsync(template.Template.Id, "Bloc");
+    var field = await service.AddFieldAsync(block.Id, "Champ", FieldType.ShortText);
+    var record = await service.CreateRecordAsync(template.Template.Id);
+    await service.SaveFieldValueAsync(record.Record.Id, field.Id, "\"v\"");
+    using (var raw = new SQLite.SQLiteConnection(Path.Combine(FileSystem.AppDataDirectory, "ultimate-manager.db3")))
+    {
+        raw.Insert(new BlockInstance { Id = Guid.NewGuid(), EntityRecordId = record.Record.Id, BlockDefinitionId = block.Id, Name = "Doublon", DisplayOrder = 0 });
+        raw.Insert(new BlockInstance { Id = Guid.NewGuid(), EntityRecordId = record.Record.Id, BlockDefinitionId = Guid.NewGuid(), Name = "Orphelin", DisplayOrder = 5 });
+    }
+
+    var loaded = await service.GetRecordAsync(record.Record.Id);
+    Assert(loaded!.Blocks.Count == 1, $"Une seule instance attendue par définition, obtenu {loaded.Blocks.Count}.");
+    Assert(ValueOf(loaded, field.Id) == "\"v\"", "Valeur perdue avec doublon historique.");
+    using var check = new SQLite.SQLiteConnection(Path.Combine(FileSystem.AppDataDirectory, "ultimate-manager.db3"));
+    Assert(check.Table<BlockInstance>().Count() == 3, "La lecture ne doit rien supprimer.");
+    Assert(check.Table<FieldValue>().Count() == 1, "Valeur supprimée.");
+});
+
+static async Task TestSaveAndReloadAfterRestartAsync()
+{
+    var root = CreateTemporaryDirectory();
+    var previous = FileSystem.AppDataDirectory;
+    var workspace = new WorkspaceContextStub(Guid.NewGuid());
+    try
+    {
+        FileSystem.AppDataDirectory = root;
+        var externalId = Guid.NewGuid();
+        Guid templateId, fieldId, recordId;
+        var first = new SqliteDynamicFormService(workspace);
+        try
+        {
+            var template = await first.CreateTemplateAsync("Fiche");
+            templateId = template.Template.Id;
+            var block = await first.AddBlockAsync(templateId, "Ancien");
+            fieldId = (await first.AddFieldAsync(block.Id, "Champ", FieldType.ShortText)).Id;
+            var record = await first.GetOrCreateRecordAsync(externalId, templateId);
+            recordId = record.Record.Id;
+            await first.SaveFieldValueAsync(recordId, fieldId, "\"persisté\"");
+            await first.AddBlockAsync(templateId, "Ajouté après");
+        }
+        finally
+        {
+            await first.DisposeAsync();
+        }
+
+        var second = new SqliteDynamicFormService(workspace);
+        try
+        {
+            var reloaded = await second.GetOrCreateRecordAsync(externalId, templateId);
+            Assert(reloaded.Record.Id == recordId, "Fiche recréée après redémarrage.");
+            Assert(reloaded.Blocks.Count == 2, "Bloc ajouté après la fiche absent après redémarrage.");
+            Assert(ValueOf(reloaded, fieldId) == "\"persisté\"", "Valeur non relû après redémarrage.");
+        }
+        finally
+        {
+            await second.DisposeAsync();
+        }
+    }
+    finally
+    {
+        FileSystem.AppDataDirectory = previous;
+        DeleteTemporaryDirectory(root);
+    }
+}
 
 static async Task WithClientServiceAsync(Func<string, SqliteClientService, ClientBackupStub, Task> test)
 {
