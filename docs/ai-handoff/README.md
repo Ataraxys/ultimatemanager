@@ -2,6 +2,10 @@
 
 This folder is the shared, Git-backed handoff point between ChatGPT (product/architecture/QA direction) and Codex/GitHub Copilot (repository execution).
 
+## Universal agent rule — mandatory
+
+Every AI agent and automation working on this repository must follow [`AGENT_PROTOCOL.md`](AGENT_PROTOCOL.md), without exception. This includes Copilot, Codex, ChatGPT-connected agents, and future agents. Every task must produce and publish a unique handoff report in `inbox/`, including compile fixes, small corrections, audits, and blocked tasks. The protocol defines the required report contents, branch handling, verification evidence, and final response.
+
 ## Branch model — mandatory
 
 - `develop` is the canonical application integration branch. It must contain the latest accepted, buildable application state, not merely agent reports or planning documents.
