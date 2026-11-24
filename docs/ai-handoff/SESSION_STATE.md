@@ -2,17 +2,17 @@
 
 Last updated: 2026-11-24
 
-## Current authorized task — full independent review of PR #5
+## Current authorized task — Copilot QA audit of PR #5
 
-- Mission published: `docs/ai-handoff/outbox/20261124_MISSION-PR5-REVUE-COMPLETE-82-FICHIERS.md`.
-- Mission publication commit on `integration/reconcile-feature-branches`: `0837de814e955cc280e9741ea620537ab3def2d2`.
-- Scope: strictly read-only, exhaustive review of every file changed by PR #5; no code changes, no corrective commits, no approval and no merge.
-- Latest PR metadata observed immediately before this SESSION_STATE update: PR #5 open, draft, not merged; base `develop` at `47b6dbf615cd62cdb9c5c0be018dda60310c826d`; head `integration/reconcile-feature-branches` at `dc34c9fb095fef980c065ea213db18a008628442`; 83 changed files; mergeable=false. The original filename retains “82” from the earlier count, but the mission body and actual scope specify all 83 files currently returned by GitHub. This SESSION_STATE commit itself will advance the branch; refresh live refs before starting.
-- Previous independent corrective review is published at `docs/ai-handoff/inbox/20261124-CODEX-pr5-corrective-review.txt` on `ai-handoff/report-corrective-backup-templates`. It accepted the targeted corrective diff with environment/UI caveats, but explicitly did not approve the full PR.
+- Codex quota is unavailable; the full independent PR #5 review is reassigned to GitHub Copilot agent `@qa-reviewer`.
+- Current Copilot mission: `docs/ai-handoff/outbox/20261124_MISSION-COPILOT-QA-REVIEW-PR5.md` (published on `integration/reconcile-feature-branches`).
+- Detailed audit scope remains defined by `docs/ai-handoff/outbox/20261124_MISSION-PR5-REVUE-COMPLETE-82-FICHIERS.md`; Copilot mission explicitly references and adopts it.
+- Strictly read-only audit: no code changes, no corrective commits, no PR approval and no merge.
+- Last live PR metadata checked before this handoff: PR #5 open, draft, not merged; base `develop` SHA `47b6dbf615cd62cdb9c5c0be018dda60310c826d`; head `integration/reconcile-feature-branches` SHA `5594fe5a9e06333b6789599396985dc81a1f10c8`; 83 changed files; mergeable=true. The handoff commit itself advances the integration branch; Copilot must refresh refs and recheck the complete diff before starting.
+- Primary agent: `@qa-reviewer`. Specialized agents may be consulted only for clearly scoped analysis; each must publish a distinct report, and QA Reviewer must consolidate their evidence.
 - Required output: exhaustive file-by-file review matrix, evidence-backed P0–P3 findings, separate product/architecture decisions, exact verification results, and a single verdict APPROVE / REQUEST CHANGES / BLOCKED.
 - Report branch must be report-only and based on the refreshed current `develop` SHA. No application code on that branch.
 - Do not merge PR #5. Do not modify `develop`, the integration code, the feature source branch, or the protected local worktree. Preserve the pre-existing `UltimateManager.csproj` change on `feature/block-instances-fix`.
-
 ## Latest corrective mission — backup fail-closed and template visibility
 
 - Mission: `docs/ai-handoff/outbox/20261124_CORRECTIVE-BACKUP-TEMPLATES.md`.
@@ -43,7 +43,7 @@ The following risks were identified in earlier reviews and must be revalidated a
 ## Collaboration model
 
 - ChatGPT acts as product/technical cofounder: roadmap, architecture, technical arbitration, independent review, and approval of next steps.
-- Codex / GitHub Copilot agents execute repository analysis, implementation, and QA within explicitly assigned scopes.
+- GitHub Copilot agents execute repository analysis, implementation, and QA within explicitly assigned scopes; use Codex when quota is available.
 - Shared handoff location: `docs/ai-handoff/`.
 - ChatGPT → Codex: `docs/ai-handoff/outbox/`.
 - Codex → ChatGPT: `docs/ai-handoff/inbox/`.
