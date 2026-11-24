@@ -37,7 +37,7 @@ Le XAML de `ClientEditPage` contient déjà un `Entry` lié à `DynamicRecordFie
 
 Le commit applicatif `1ae541ba86a77eaebac581114f06f008c8e7ea8d` est déclaré comme étant sur `ai-handoff/report-block-label-editing`.
 
-La comparaison GitHub confirme que cette branche contient des modifications applicatives (`Services/SqliteDynamicFormService.cs`, ViewModel, tests et UI/template) ainsi que des modifications d'instructions d'agents. Elle est à 4 commits devant `feature/add-personalisation` à `2bbcd1b...`. Elle n'est donc pas une branche de rapport uniquement.
+La comparaison GitHub confirme que cette branche contient des modifications applicatives (`Services/SqliteDynamicFormService.cs`, ViewModel, tests et UI/template) ainsi que des modifications d'instructions d'agents. Elle est à 4 commits devant `feature/add-personalisation` à `2bbcd1b...`. Elle n'est donc pas une branche de rapport uniquement. Le nom du rapport commence par `20260101`, qui ne correspond pas à la date réelle (2026-11-24) ni au format de nommage horodaté requis. La branche embarque également une version plus ancienne de `AGENT_PROTOCOL.md`, ce qui risque de réintroduire un protocole périmé.
 
 Cela contrevient à `docs/ai-handoff/README.md` et `AGENT_PROTOCOL.md` : une branche `ai-handoff/report-*` ne doit contenir que les fichiers de passation et ne doit jamais porter de code produit.
 
