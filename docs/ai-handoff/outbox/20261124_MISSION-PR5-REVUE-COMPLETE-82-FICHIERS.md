@@ -1,4 +1,4 @@
-# MISSION — REVUE INDÉPENDANTE COMPLÈTE DE LA PR #5 (82 FICHIERS)
+# MISSION — REVUE INDÉPENDANTE COMPLÈTE DE LA PR #5 (83 FICHIERS)
 
 Date : 2026-11-24  
 Statut : AUTORISÉE — REVUE STRICTEMENT READ-ONLY  
@@ -7,7 +7,7 @@ PR : [#5 — Intégration réconciliée des formulaires dynamiques et blocs SQLi
 
 ## 1. Objectif
 
-Réaliser une revue technique, fonctionnelle, architecturale et orientée intégrité des données de **l'intégralité des 82 fichiers modifiés par la PR #5**, depuis sa base `develop` jusqu'à sa tête actuelle.
+Réaliser une revue technique, fonctionnelle, architecturale et orientée intégrité des données de **l'intégralité des 83 fichiers modifiés par la PR #5**, depuis sa base `develop` jusqu'à sa tête actuelle.
 
 La précédente revue indépendante portait uniquement sur le correctif ciblé de restauration fail-closed et de visibilité des templates. Elle n'approuvait pas la PR entière. Cette mission doit donc examiner le périmètre global, identifier les défauts concrets et les décisions produit/architecture encore nécessaires, puis recommander explicitement si la PR peut être approuvée, doit être corrigée ou reste bloquée.
 
@@ -20,10 +20,10 @@ Dernier état GitHub observé le 2026-11-24 :
 - PR : `#5`, ouverte, draft, non fusionnée.
 - Base : `develop`, SHA `47b6dbf615cd62cdb9c5c0be018dda60310c826d`.
 - Head : `integration/reconcile-feature-branches`, SHA `9c76f7f52ed47b1bb0c9f46741c73b9be3374bfb`.
-- Volume annoncé : 82 fichiers, +9 744 / -186.
+- Volume annoncé : 83 fichiers, +9 744 / -186.
 - Mergeability retournée lors de la dernière lecture : `true`. Ce statut technique ne constitue jamais une approbation.
 
-Ces SHA sont des points de départ, pas une permission d'ignorer l'état actuel.
+Le nom du fichier conserve le nombre initial annoncé dans le rapport précédent ; le périmètre réel à auditer est le nombre complet de fichiers renvoyé par GitHub. Après publication de cette mission, le total observé est passé à 83 car la mission elle-même est incluse dans le diff de la PR. Ces SHA sont des points de départ, pas une permission d'ignorer l'état actuel.
 
 ## 3. Pré-vol obligatoire — STOP si incohérence
 
@@ -42,7 +42,7 @@ Aucune modification de branche ou de fichier applicatif n'est autorisée pendant
 
 ### 4.1 Couverture des fichiers
 
-- Examiner **chacun des 82 fichiers** (ou le nombre réel constaté).
+- Examiner **chacun des 83 fichiers** (ou le nombre réel constaté).
 - Pour chaque fichier, déterminer son rôle, la nature du changement, les dépendances et les effets possibles.
 - Lire le contenu et le diff pertinents, pas uniquement les noms de fichiers ou les résumés de commits.
 - Suivre les appels entre UI, ViewModels, services, modèles, persistance SQLite et tests.
