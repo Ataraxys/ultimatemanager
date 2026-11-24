@@ -44,7 +44,8 @@ var tests = new (string Name, Func<Task> Test)[]
     ("35_EXISTING_INSTANCES_PRESERVED_AND_BLOCK_RENAME", TestExistingInstancesPreservedAndBlockRenameAsync),
     ("36_CONCURRENT_GET_OR_CREATE_SINGLE_RECORD", TestConcurrentGetOrCreateSingleRecordAsync),
     ("37_LEGACY_DUPLICATE_AND_ORPHAN_INSTANCES_TOLERATED", TestLegacyDuplicateAndOrphanInstancesAsync),
-    ("38_SAVE_AND_RELOAD_AFTER_RESTART", TestSaveAndReloadAfterRestartAsync)
+    ("38_SAVE_AND_RELOAD_AFTER_RESTART", TestSaveAndReloadAfterRestartAsync),
+    ("39_TEMPLATE_SWITCH_PRESERVES_EXISTING_DATA", TestTemplateSwitchPreservesExistingDataAsync)
 };
 
 var failed = 0;
@@ -679,6 +680,32 @@ static Task TestLabelRenameKeepsValuesAsync() => WithDynamicServiceAsync(async s
     Assert(ValueOf(reloaded, target.Id) == "\"valeur cible\"", "Valeur du champ renommé perdue.");
     Assert(ValueOf(reloaded, neighbour.Id) == "\"valeur voisin\"", "Valeur du voisin affectée.");
     Assert(reloaded.Record.Id == record.Record.Id, "La fiche a été recréée.");
+});
+
+static Task TestTemplateSwitchPreservesExistingDataAsync() => WithDynamicServiceAsync(async service =>
+{
+    var originalTemplate = await service.CreateTemplateAsync("Modèle d'origine");
+    var originalBlock = await service.AddBlockAsync(originalTemplate.Template.Id, "Bloc d'origine");
+    var originalField = await service.AddFieldAsync(originalBlock.Id, "Information", FieldType.ShortText);
+    var replacementTemplate = await service.CreateTemplateAsync("Nouveau modèle");
+    var externalId = Guid.NewGuid();
+    var originalRecord = await service.GetOrCreateRecordAsync(externalId, originalTemplate.Template.Id);
+    await service.SaveFieldValueAsync(originalRecord.Record.Id, originalField.Id, "\"à conserver\"");
+
+    var rejected = false;
+    try
+    {
+        await service.GetOrCreateRecordAsync(externalId, replacementTemplate.Template.Id);
+    }
+    catch (InvalidOperationException exception) when (exception.Message.Contains("autre modèle", StringComparison.OrdinalIgnoreCase))
+    {
+        rejected = true;
+    }
+
+    Assert(rejected, "Le changement de modèle doit être refusé sans migration de données.");
+    var preserved = await service.GetOrCreateRecordAsync(externalId, originalTemplate.Template.Id);
+    Assert(preserved.Record.Id == originalRecord.Record.Id, "L'identifiant de la fiche existante doit rester inchangé.");
+    Assert(ValueOf(preserved, originalField.Id) == "\"à conserver\"", "La valeur existante doit rester inchangée après le refus.");
 });
 
 static Task TestConcurrentRecordLoadsNoDuplicatesAsync() => WithDynamicServiceAsync(async service =>

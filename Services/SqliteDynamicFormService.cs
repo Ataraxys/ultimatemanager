@@ -529,6 +529,13 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
                              record.ExternalEntityId == externalEntityId)
             .FirstOrDefaultAsync();
 
+        if (previousRecord is not null)
+        {
+            throw new InvalidOperationException(
+                "Cette fiche possède déjà des données associées à un autre modèle. " +
+                "Le changement de modèle est bloqué tant qu'une migration qui conserve ces données n'est pas disponible.");
+        }
+
         var template = await GetTemplateAsync(templateId, cancellationToken)
             ?? throw new InvalidOperationException("Le modèle demandé n’existe pas dans cet espace de travail.");
         var now = DateTime.UtcNow;
@@ -556,24 +563,10 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             blocks.Add(new BlockInstanceModel { Block = block, Values = [] });
         }
 
-        // Remplacement éventuel de l'ancienne fiche + création de la nouvelle : une seule transaction.
+        // Création atomique de la fiche et de ses instances. Une fiche existante liée à
+        // un autre modèle est refusée plus haut afin de préserver ses valeurs.
         await _connection.RunInTransactionAsync(connection =>
         {
-            if (previousRecord is not null)
-            {
-                foreach (var value in connection.Table<FieldValue>().Where(item => item.EntityRecordId == previousRecord.Id).ToList())
-                {
-                    connection.Delete(value);
-                }
-
-                foreach (var oldBlock in connection.Table<BlockInstance>().Where(item => item.EntityRecordId == previousRecord.Id).ToList())
-                {
-                    connection.Delete(oldBlock);
-                }
-
-                connection.Delete<EntityRecord>(previousRecord.Id);
-            }
-
             connection.Insert(record);
             foreach (var model in blocks)
             {
