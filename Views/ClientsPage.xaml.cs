@@ -43,29 +43,9 @@ public partial class ClientsPage : ContentPage
         }
     }
 
-    private async void OnImportCompleteBackupClicked(object? sender, EventArgs e)
+    private Task OnImportCompleteBackupClicked(object? sender, EventArgs e)
     {
-        try
-        {
-            var backupService = App.Services.GetRequiredService<ICompleteBackupService>();
-            if (await DisplayAlertAsync(
-                    "Restaurer une archive",
-                    "La restauration remplacera les clients, templates et fiches dynamiques actuels.",
-                    "Restaurer",
-                    "Annuler") && await backupService.PickAndRestoreAsync())
-            {
-                await _viewModel.LoadCommand.ExecuteAsync(null);
-                await DisplayAlertAsync("Restauration", "La sauvegarde complète a été restaurée.", "OK");
-            }
-        }
-        catch (InvalidDataException exception)
-        {
-            await DisplayAlertAsync("Restauration", $"Archive invalide : {exception.Message}", "OK");
-        }
-        catch (Exception exception)
-        {
-            await DisplayAlertAsync("Restauration", $"La restauration a échoué : {exception.Message}", "OK");
-        }
+        return DisplayAlertAsync("Restauration indisponible", ICompleteBackupService.RestoreUnavailableMessage, "OK");
     }
 
     private async void OnImportBackupClicked(object? sender, EventArgs e)

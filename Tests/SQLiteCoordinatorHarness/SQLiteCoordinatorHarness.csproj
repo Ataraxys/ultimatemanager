@@ -16,6 +16,8 @@
 	<Compile Include="..\..\Services\SQLiteDatabaseCoordinator.cs" Link="Production\SQLiteDatabaseCoordinator.cs" />
 	<Compile Include="..\..\Services\IClientService.cs" Link="Production\IClientService.cs" />
 	<Compile Include="..\..\Services\IClientBackupService.cs" Link="Production\IClientBackupService.cs" />
+	<Compile Include="..\..\Services\ICompleteBackupService.cs" Link="Production\ICompleteBackupService.cs" />
+	<Compile Include="..\..\Services\CompleteBackupService.cs" Link="Production\CompleteBackupService.cs" />
 	<Compile Include="..\..\Services\SqliteClientService.cs" Link="Production\SqliteClientService.cs" />
 	<Compile Include="..\..\Models\Client.cs" Link="Production\Client.cs" />
 	<Compile Include="..\..\Models\DynamicForms\FieldType.cs" Link="Production\FieldType.cs" />

@@ -27,14 +27,8 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             .Where(template => template.WorkspaceId == _workspaceContext.WorkspaceId)
             .OrderBy(template => template.Name)
             .ToListAsync();
-        var clientTemplateIds = (await _connection.Table<EntityRecord>()
-                .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId)
-                .ToListAsync())
-            .Select(record => record.TemplateId)
-            .ToHashSet();
-
-        var result = new List<TemplateDefinition>(Math.Max(templates.Count - clientTemplateIds.Count, 0));
-        foreach (var template in templates.Where(template => !clientTemplateIds.Contains(template.Id)))
+        var result = new List<TemplateDefinition>(templates.Count);
+        foreach (var template in templates)
         {
             result.Add(await LoadTemplateAsync(template, cancellationToken));
         }

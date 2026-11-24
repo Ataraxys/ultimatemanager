@@ -1,4 +1,5 @@
-﻿using SQLitePCL;
+using SQLitePCL;
+using System.Text.Json;
 using UltimateManager.Models;
 using UltimateManager.Models.DynamicForms;
 using UltimateManager.Services;
@@ -45,7 +46,9 @@ var tests = new (string Name, Func<Task> Test)[]
     ("36_CONCURRENT_GET_OR_CREATE_SINGLE_RECORD", TestConcurrentGetOrCreateSingleRecordAsync),
     ("37_LEGACY_DUPLICATE_AND_ORPHAN_INSTANCES_TOLERATED", TestLegacyDuplicateAndOrphanInstancesAsync),
     ("38_SAVE_AND_RELOAD_AFTER_RESTART", TestSaveAndReloadAfterRestartAsync),
-    ("39_TEMPLATE_SWITCH_PRESERVES_EXISTING_DATA", TestTemplateSwitchPreservesExistingDataAsync)
+    ("39_TEMPLATE_SWITCH_PRESERVES_EXISTING_DATA", TestTemplateSwitchPreservesExistingDataAsync),
+    ("40_USED_TEMPLATES_REMAIN_AVAILABLE_IN_WORKSPACE", TestUsedTemplatesRemainAvailableAsync),
+    ("41_COMPLETE_BACKUP_RESTORE_FAILS_CLOSED", TestCompleteBackupRestoreFailsClosedAsync)
 };
 
 var failed = 0;
@@ -708,6 +711,130 @@ static Task TestTemplateSwitchPreservesExistingDataAsync() => WithDynamicService
     Assert(ValueOf(preserved, originalField.Id) == "\"à conserver\"", "La valeur existante doit rester inchangée après le refus.");
 });
 
+static async Task TestUsedTemplatesRemainAvailableAsync()
+{
+    var root = CreateTemporaryDirectory();
+    var previous = FileSystem.AppDataDirectory;
+    SqliteDynamicFormService? service = null;
+    try
+    {
+        FileSystem.AppDataDirectory = root;
+        var workspaceId = Guid.NewGuid();
+        service = new SqliteDynamicFormService(new WorkspaceContextStub(workspaceId));
+        var usedTemplate = await service.CreateTemplateAsync("Modèle utilisé");
+        var unusedTemplate = await service.CreateTemplateAsync("Modèle disponible");
+        var externalId = Guid.NewGuid();
+        var record = await service.GetOrCreateRecordAsync(externalId, usedTemplate.Template.Id);
+
+        var available = await service.GetTemplatesAsync();
+        Assert(available.Count == 2, $"2 templates attendus dans le Workspace, obtenu {available.Count}.");
+        Assert(available.Any(item => item.Template.Id == usedTemplate.Template.Id), "Le template associé à une fiche doit rester visible.");
+        Assert(available.Any(item => item.Template.Id == unusedTemplate.Template.Id), "Le template non utilisé doit rester visible.");
+        var selectedAgain = available.Single(item => item.Template.Id == usedTemplate.Template.Id);
+        var reused = await service.GetOrCreateRecordAsync(externalId, selectedAgain.Template.Id);
+        Assert(reused.Record.Id == record.Record.Id, "Le template utilisé doit rester réutilisable pour la fiche existante.");
+
+        await service.DisposeAsync();
+        service = new SqliteDynamicFormService(new WorkspaceContextStub(Guid.NewGuid()));
+        var otherWorkspaceTemplate = await service.CreateTemplateAsync("Autre Workspace");
+        var otherWorkspaceTemplates = await service.GetTemplatesAsync();
+        Assert(otherWorkspaceTemplates.Count == 1 && otherWorkspaceTemplates[0].Template.Id == otherWorkspaceTemplate.Template.Id,
+            "Les templates d'un autre Workspace ne doivent pas être exposés.");
+    }
+    finally
+    {
+        if (service is not null)
+        {
+            await service.DisposeAsync();
+        }
+
+        FileSystem.AppDataDirectory = previous;
+        DeleteTemporaryDirectory(root);
+    }
+}
+
+static async Task TestCompleteBackupRestoreFailsClosedAsync()
+{
+    var root = CreateTemporaryDirectory();
+    var previous = FileSystem.AppDataDirectory;
+    CompleteBackupService? service = null;
+    try
+    {
+        FileSystem.AppDataDirectory = root;
+        var databasePath = Path.Combine(root, "ultimate-manager.db3");
+        SeedBackupDatabase(databasePath);
+        var before = CaptureBackupDatabase(databasePath);
+        service = new CompleteBackupService(
+            new WorkspaceContextStub(Guid.NewGuid()),
+            new ClientBackupStub(),
+            new DynamicFieldValueSerializer());
+
+        var failure = await CaptureExceptionAsync(async () => { _ = await service.PickAndRestoreAsync(); });
+        Assert(failure is NotSupportedException, $"NotSupportedException attendue, obtenu {failure.GetType().Name}.");
+        Assert(failure.Message == ICompleteBackupService.RestoreUnavailableMessage, "Le refus doit expliquer que la restauration est indisponible.");
+        await service.DisposeAsync();
+        service = null;
+
+        var after = CaptureBackupDatabase(databasePath);
+        Assert(before == after, "Une tentative de restauration refusée ne doit modifier aucune ligne préexistante.");
+    }
+    finally
+    {
+        if (service is not null)
+        {
+            await service.DisposeAsync();
+        }
+
+        FileSystem.AppDataDirectory = previous;
+        DeleteTemporaryDirectory(root);
+    }
+}
+
+static void SeedBackupDatabase(string path)
+{
+    using var connection = new SQLite.SQLiteConnection(path);
+    connection.CreateTable<Client>();
+    connection.CreateTable<Workspace>();
+    connection.CreateTable<EntityTemplate>();
+    connection.CreateTable<BlockDefinition>();
+    connection.CreateTable<FieldDefinition>();
+    connection.CreateTable<EntityRecord>();
+    connection.CreateTable<BlockInstance>();
+    connection.CreateTable<FieldValue>();
+    var now = DateTime.UtcNow;
+    var workspace = new Workspace { Id = Guid.NewGuid(), Name = "Préexistant", CreatedAt = now };
+    var template = new EntityTemplate { Id = Guid.NewGuid(), WorkspaceId = workspace.Id, Name = "Préexistant", CreatedAt = now, UpdatedAt = now };
+    var block = new BlockDefinition { Id = Guid.NewGuid(), TemplateId = template.Id, Name = "Bloc", DisplayOrder = 0 };
+    var field = new FieldDefinition { Id = Guid.NewGuid(), BlockDefinitionId = block.Id, Label = "Champ", FieldType = FieldType.ShortText };
+    var client = new Client { Id = Guid.NewGuid(), FirstName = "Alice", LastName = "Test", City = "Paris", CreatedAt = now, UpdatedAt = now };
+    var record = new EntityRecord { Id = Guid.NewGuid(), WorkspaceId = workspace.Id, TemplateId = template.Id, ExternalEntityId = client.Id, CreatedAt = now, UpdatedAt = now };
+    var instance = new BlockInstance { Id = Guid.NewGuid(), EntityRecordId = record.Id, BlockDefinitionId = block.Id, Name = block.Name };
+    var value = new FieldValue { Id = Guid.NewGuid(), EntityRecordId = record.Id, FieldDefinitionId = field.Id, ValueJson = "\"à conserver\"", UpdatedAt = now };
+    connection.Insert(workspace);
+    connection.Insert(template);
+    connection.Insert(block);
+    connection.Insert(field);
+    connection.Insert(client);
+    connection.Insert(record);
+    connection.Insert(instance);
+    connection.Insert(value);
+}
+
+static string CaptureBackupDatabase(string path)
+{
+    using var connection = new SQLite.SQLiteConnection(path);
+    return JsonSerializer.Serialize(new
+    {
+        Clients = connection.Table<Client>().ToList().OrderBy(item => item.Id).ToArray(),
+        Workspaces = connection.Table<Workspace>().ToList().OrderBy(item => item.Id).ToArray(),
+        Templates = connection.Table<EntityTemplate>().ToList().OrderBy(item => item.Id).ToArray(),
+        Blocks = connection.Table<BlockDefinition>().ToList().OrderBy(item => item.Id).ToArray(),
+        Fields = connection.Table<FieldDefinition>().ToList().OrderBy(item => item.Id).ToArray(),
+        Records = connection.Table<EntityRecord>().ToList().OrderBy(item => item.Id).ToArray(),
+        Instances = connection.Table<BlockInstance>().ToList().OrderBy(item => item.Id).ToArray(),
+        Values = connection.Table<FieldValue>().ToList().OrderBy(item => item.Id).ToArray()
+    });
+}
 static Task TestConcurrentRecordLoadsNoDuplicatesAsync() => WithDynamicServiceAsync(async service =>
 {
     var template = await service.CreateTemplateAsync("Fiche");
