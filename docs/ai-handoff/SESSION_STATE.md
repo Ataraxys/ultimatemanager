@@ -11,7 +11,7 @@ Last updated: 2026-11-24
 - `CompleteBackupService.PickAndRestoreAsync` now fails closed with `NotSupportedException` before file selection or database initialization. The destructive import path is removed. The UI restore toolbar action is disabled and the page explains that restore is temporarily unavailable. Backup creation and sharing remain enabled; safe restore is not implemented.
 - `SqliteDynamicFormService.GetTemplatesAsync` returns every template in the active Workspace, still ordered by name. A used template remains visible and reusable; another Workspace's template stays filtered out.
 - Verification on the corrective code: Android Debug build PASS (0 warnings, 0 errors); SQLite harness PASS (`failed=0`, 39 PASS, tests 16/17 NOT_TESTED); targeted tests 40/41 prove used-template availability and unchanged rows after restore refusal. Manual MAUI flow NOT TESTED (`adb` unavailable).
-- PR #5 targets `develop`, is open and draft, and has not been merged. Latest GitHub status after the corrective push: `mergeable=true`.
+- PR #5 targets `develop`, is open and draft, and has not been merged. GitHub mergeability responses have alternated between `true` and `false`; the latest metadata fetch returned `false`. Verify the live PR status before any merge decision.
 - The user’s original `feature/block-instances-fix` worktree and pre-existing `UltimateManager.csproj` diff remain untouched. No changes were made to `develop` or feature source branches.
 - Current next step: independent review of this corrective diff. Do not merge PR #5 until the review and required product/architecture decisions are complete.
 
