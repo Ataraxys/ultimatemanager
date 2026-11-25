@@ -185,20 +185,31 @@ public partial class ClientEditViewModel(
         if (_isExistingClient)
         {
             existingRecord = await _dynamicFormService.GetRecordForExternalEntityAsync(clientId, cancellationToken);
-            selected = existingRecord is null
-                ? null
-                : Templates.FirstOrDefault(template => template.Id == existingRecord.Record.TemplateId);
+            if (existingRecord is null)
+            {
+                var defaultTemplate = await _dynamicFormService.GetDefaultClientTemplateAsync(cancellationToken);
+                await _dynamicFormService.EnsureClientTemplateAsync(
+                    clientId,
+                    defaultTemplate.Template.Id,
+                    cancellationToken);
+                existingRecord = await _dynamicFormService.GetRecordForExternalEntityAsync(clientId, cancellationToken);
+            }
+
+            if (existingRecord is not null)
+            {
+                selected = Templates.FirstOrDefault(template => template.Id == existingRecord.Record.TemplateId);
+            }
         }
 
         if (_isExistingClient)
         {
             if (existingRecord is null)
             {
-                throw new InvalidOperationException("Le template de la fiche client est introuvable.");
+                throw new InvalidOperationException("La fiche dynamique du client n’a pas pu être initialisée.");
             }
 
             _workingTemplateId = existingRecord.Record.TemplateId;
-            await _dynamicRecordViewModel.LoadAsync(_clientId, _workingTemplateId, cancellationToken);
+            await _dynamicRecordViewModel.LoadAsync(existingRecord, cancellationToken);
             SelectedTemplate = selected;
         }
         else

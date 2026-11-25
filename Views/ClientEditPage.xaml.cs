@@ -28,24 +28,31 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
 
     public async void ApplyQueryAttributes(IDictionary<string, object> query)
     {
-        if (!query.TryGetValue("id", out var value) || !Guid.TryParse(value?.ToString(), out var id))
+        try
         {
-            _viewModel.Load(null);
-            return;
-        }
+            if (!query.TryGetValue("id", out var value) || !Guid.TryParse(value?.ToString(), out var id))
+            {
+                _viewModel.Load(null);
+                return;
+            }
 
-        var modeValue = query.TryGetValue("mode", out var mode) ? mode?.ToString() : "content";
-        var structureEditing = string.Equals(modeValue, "structure", StringComparison.OrdinalIgnoreCase);
-        if (!structureEditing && !string.Equals(modeValue, "content", StringComparison.OrdinalIgnoreCase))
+            var modeValue = query.TryGetValue("mode", out var mode) ? mode?.ToString() : "content";
+            var structureEditing = string.Equals(modeValue, "structure", StringComparison.OrdinalIgnoreCase);
+            if (!structureEditing && !string.Equals(modeValue, "content", StringComparison.OrdinalIgnoreCase))
+            {
+                await Shell.Current.GoToAsync("..");
+                return;
+            }
+
+            var clientService = App.Services.GetRequiredService<Services.IClientService>();
+            var client = await clientService.GetByIdAsync(id);
+            _viewModel.Load(client, structureEditing);
+            await _viewModel.LoadTemplateSelectionAsync(id);
+        }
+        catch (Exception exception)
         {
-            await Shell.Current.GoToAsync("..");
-            return;
+            await DisplayAlertAsync("Chargement impossible", exception.Message, "OK");
         }
-
-        var clientService = App.Services.GetRequiredService<Services.IClientService>();
-        var client = await clientService.GetByIdAsync(id);
-        _viewModel.Load(client, structureEditing);
-        await _viewModel.LoadTemplateSelectionAsync(id);
     }
 
     private async void OnTemplateChanged(object? sender, EventArgs e)

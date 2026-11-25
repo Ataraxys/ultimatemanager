@@ -330,8 +330,7 @@ public partial class ClientDetailsViewModel(
             return;
         }
 
-        var templateId = record.Record.TemplateId;
-        await _dynamicRecordViewModel.LoadAsync(CurrentClient.Id, templateId, cancellationToken);
+        await _dynamicRecordViewModel.LoadAsync(record, cancellationToken);
         OnPropertyChanged(nameof(TemplateName));
         OnPropertyChanged(nameof(TemplateId));
     }

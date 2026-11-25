@@ -4,20 +4,26 @@ using UltimateManager.Services;
 
 internal sealed class DynamicFormServiceStub : IDynamicFormService
 {
+    public List<TemplateDefinition> TemplateDefinitions { get; } = [];
     public List<EntityTemplate> PersistedTemplates { get; } = [];
     public List<EntityRecord> PersistedRecords { get; } = [];
     public int PersistenceWrites { get; private set; }
+    public int GetOrCreateCalls { get; private set; }
     public Guid ActualTemplateId { get; set; } = Guid.NewGuid();
     public Guid LastLoadedTemplateId { get; private set; }
+    public EntityRecordModel? ExistingRecord { get; set; }
+    public Guid? LastSavedRecordId { get; private set; }
+    public IReadOnlyDictionary<Guid, string>? LastSavedFieldValues { get; private set; }
 
     public Task<IReadOnlyList<TemplateDefinition>> GetTemplatesAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<TemplateDefinition>>([]);
+        Task.FromResult<IReadOnlyList<TemplateDefinition>>(TemplateDefinitions);
 
     public Task<TemplateDefinition?> GetTemplateAsync(Guid templateId, CancellationToken cancellationToken = default) =>
-        Task.FromResult<TemplateDefinition?>(new TemplateDefinition { Template = new EntityTemplate { Id = templateId, Name = "Persisté", EntityType = "Client" } });
+        Task.FromResult<TemplateDefinition?>(TemplateDefinitions.FirstOrDefault(template => template.Template.Id == templateId)
+            ?? new TemplateDefinition { Template = new EntityTemplate { Id = templateId, Name = "Persisté", EntityType = "Client" } });
 
     public Task<EntityRecordModel?> GetRecordForExternalEntityAsync(Guid externalEntityId, CancellationToken cancellationToken = default) =>
-        Task.FromResult<EntityRecordModel?>(null);
+        Task.FromResult(ExistingRecord);
 
     public Task<TemplateDefinition> CloneTemplateAsync(Guid sourceTemplateId, string name, CancellationToken cancellationToken = default, Guid? ownerClientId = null) =>
         Task.FromResult(new TemplateDefinition());
@@ -41,6 +47,7 @@ internal sealed class DynamicFormServiceStub : IDynamicFormService
 
     public Task<EntityRecordModel> GetOrCreateRecordAsync(Guid externalEntityId, Guid templateId, CancellationToken cancellationToken = default)
     {
+        GetOrCreateCalls++;
         LastLoadedTemplateId = templateId;
         return Task.FromResult(new EntityRecordModel { Record = new EntityRecord { Id = Guid.NewGuid(), TemplateId = templateId, ExternalEntityId = externalEntityId } });
     }
@@ -70,7 +77,12 @@ internal sealed class DynamicFormServiceStub : IDynamicFormService
     public Task MoveBlockAsync(Guid templateId, Guid blockId, int offset, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task MoveFieldAsync(Guid blockId, Guid fieldId, int offset, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task SaveFieldValueAsync(Guid recordId, Guid fieldDefinitionId, string valueJson, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    public Task SaveFieldValuesAsync(Guid recordId, IReadOnlyDictionary<Guid, string> values, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task SaveFieldValuesAsync(Guid recordId, IReadOnlyDictionary<Guid, string> values, CancellationToken cancellationToken = default)
+    {
+        LastSavedRecordId = recordId;
+        LastSavedFieldValues = values.ToDictionary(item => item.Key, item => item.Value);
+        return Task.CompletedTask;
+    }
     public Task<EntityRecordModel> CreateRecordAsync(Guid templateId, CancellationToken cancellationToken = default) => Task.FromResult(new EntityRecordModel());
     public Task<EntityRecordModel?> GetRecordAsync(Guid recordId, CancellationToken cancellationToken = default) => Task.FromResult<EntityRecordModel?>(null);
 }

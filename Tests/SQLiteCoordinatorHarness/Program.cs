@@ -57,7 +57,12 @@ var tests = new (string Name, Func<Task> Test)[]
     ("46_COMPLETE_BACKUP_WORKSPACE_SCOPE_AND_TEMP_CLEANUP", TestCompleteBackupWorkspaceScopeAndTempCleanupAsync),
     ("47_CLIENT_EDIT_SAVE_CREATES_DRAFT_ONCE_AND_LOADS_PERSISTED_TEMPLATE", TestClientEditSaveCreatesDraftOnceAsync),
     ("48_DYNAMIC_BLOCK_FIELD_DELETE_CASCADE", TestDynamicBlockFieldDeleteCascadeAsync),
-    ("49_COMPLETE_BACKUP_FAILURE_CLEANS_TEMP", TestCompleteBackupFailureCleansTempAsync)
+    ("49_COMPLETE_BACKUP_FAILURE_CLEANS_TEMP", TestCompleteBackupFailureCleansTempAsync),
+    ("50_MISSING_CLIENT_TEMPLATE_RECOVERY_PRESERVES_DATA", TestMissingClientTemplateRecoveryPreservesDataAsync),
+    ("51_CROSS_WORKSPACE_TEMPLATE_REFERENCE_REJECTED", TestCrossWorkspaceTemplateReferenceRejectedAsync),
+    ("52_MISSING_CLIENT_RECORD_CREATES_CLIENT_TEMPLATE", TestMissingClientRecordCreatesClientTemplateAsync),
+    ("53_CONCURRENT_CLIENT_TEMPLATE_CREATION_SINGLE_RECORD", TestConcurrentClientTemplateCreationSingleRecordAsync),
+    ("54_EXISTING_CLIENT_DYNAMIC_RECORD_LOADS_AND_SAVES", TestExistingClientDynamicRecordLoadsAndSavesAsync)
 };
 
 var failed = 0;
@@ -749,6 +754,75 @@ static async Task TestClientEditSaveCreatesDraftOnceAsync()
     Assert(viewModel.IsEditing, "Le ViewModel doit passer en mode édition après la création.");
 }
 
+static async Task TestExistingClientDynamicRecordLoadsAndSavesAsync()
+{
+    var formService = new DynamicFormServiceStub();
+    var template = CreateDraftTemplate("Fiche existante", ("Information", FieldType.ShortText));
+    formService.TemplateDefinitions.Add(template);
+    var blockDefinition = template.Blocks.Single();
+    var fieldDefinition = blockDefinition.Fields.Single();
+    var client = CreateClient("Client", "Existant");
+    var recordId = Guid.NewGuid();
+    var record = new EntityRecordModel
+    {
+        Record = new EntityRecord
+        {
+            Id = recordId,
+            TemplateId = template.Template.Id,
+            ExternalEntityId = client.Id
+        },
+        Blocks =
+        [
+            new BlockInstanceModel
+            {
+                Block = new BlockInstance
+                {
+                    Id = Guid.NewGuid(),
+                    EntityRecordId = recordId,
+                    BlockDefinitionId = blockDefinition.Block.Id,
+                    Name = blockDefinition.Block.Name
+                },
+                Values =
+                [
+                    new FieldValue
+                    {
+                        Id = Guid.NewGuid(),
+                        EntityRecordId = recordId,
+                        FieldDefinitionId = fieldDefinition.Id,
+                        ValueJson = "\"valeur initiale\""
+                    }
+                ]
+            }
+        ]
+    };
+    formService.ExistingRecord = record;
+
+    var clientService = new ClientServiceStub();
+    var editRecordViewModel = new UltimateManager.ViewModels.ClientDynamicRecordViewModel(
+        formService,
+        new DynamicFieldValueSerializer(),
+        new MapProviderStub(),
+        new AutomaticBackupStub());
+    var editViewModel = new UltimateManager.ViewModels.ClientEditViewModel(
+        clientService,
+        new MapProviderStub(),
+        formService,
+        editRecordViewModel);
+    editViewModel.Load(client, structureEditing: true);
+    await editViewModel.LoadTemplateSelectionAsync(client.Id);
+
+    Assert(formService.GetOrCreateCalls == 0,
+        "Le chargement d’une fiche existante ne doit pas refaire une sélection get-or-create.");
+    editRecordViewModel.BeginEditing();
+    editRecordViewModel.Blocks.Single().Fields.Single().Value = "modifiée depuis l’édition";
+    Assert(await editRecordViewModel.SaveAsync(), "La fiche existante n’a pas pu être sauvegardée depuis l’édition.");
+    Assert(formService.LastSavedRecordId == recordId,
+        "L’édition doit sauvegarder le record déjà sélectionné.");
+    var savedValueJson = formService.LastSavedFieldValues?.GetValueOrDefault(fieldDefinition.Id);
+    Assert(savedValueJson is not null && JsonSerializer.Deserialize<string>(savedValueJson) == "modifiée depuis l’édition",
+        "La valeur modifiée n’a pas été transmise au stockage.");
+}
+
 static Task TestDynamicBlockFieldDeleteCascadeAsync() => WithDynamicServiceAsync(async service =>
 {
     var template = await service.CreateTemplateAsync("Suppression");
@@ -1301,6 +1375,88 @@ static async Task TestUsedTemplatesRemainAvailableAsync()
         DeleteTemporaryDirectory(root);
     }
 }
+
+static Task TestMissingClientTemplateRecoveryPreservesDataAsync() => WithDynamicServiceAsync(async service =>
+{
+    var template = await service.CreateTemplateAsync("Modèle utilisé");
+    var block = await service.AddBlockAsync(template.Template.Id, "Informations");
+    var field = await service.AddFieldAsync(block.Id, "Note", FieldType.ShortText);
+    var externalId = Guid.NewGuid();
+    var record = await service.GetOrCreateRecordAsync(externalId, template.Template.Id);
+    await service.SaveFieldValueAsync(record.Record.Id, field.Id, "\"valeur conservée\"");
+
+    using (var raw = new SQLite.SQLiteConnection(Path.Combine(FileSystem.AppDataDirectory, "ultimate-manager.db3")))
+    {
+        raw.Delete<EntityTemplate>(template.Template.Id);
+    }
+
+    var restoredTemplate = await service.EnsureClientTemplateAsync(externalId, Guid.Empty);
+    Assert(restoredTemplate.Template.Id == template.Template.Id, "L’identifiant du template doit rester inchangé.");
+    Assert(restoredTemplate.Blocks.SelectMany(item => item.Fields).Any(item => item.Id == field.Id),
+        "La définition du champ doit rester associée au template restauré.");
+
+    var restoredRecord = await service.GetRecordForExternalEntityAsync(externalId);
+    Assert(restoredRecord is not null && restoredRecord.Record.Id == record.Record.Id, "La fiche existante doit rester accessible.");
+    Assert(ValueOf(restoredRecord!, field.Id) == "\"valeur conservée\"", "La valeur existante doit être préservée.");
+});
+
+static Task TestCrossWorkspaceTemplateReferenceRejectedAsync() => WithDynamicServiceAsync(async service =>
+{
+    var template = await service.CreateTemplateAsync("Modèle utilisé");
+    var externalId = Guid.NewGuid();
+    await service.GetOrCreateRecordAsync(externalId, template.Template.Id);
+    var otherWorkspaceId = Guid.NewGuid();
+
+    using (var raw = new SQLite.SQLiteConnection(Path.Combine(FileSystem.AppDataDirectory, "ultimate-manager.db3")))
+    {
+        var storedTemplate = raw.Find<EntityTemplate>(template.Template.Id)
+            ?? throw new InvalidOperationException("Le template de test est absent.");
+        storedTemplate.WorkspaceId = otherWorkspaceId;
+        raw.Update(storedTemplate);
+    }
+
+    var failure = await CaptureExceptionAsync(() => service.EnsureClientTemplateAsync(externalId, Guid.Empty));
+    Assert(failure is InvalidOperationException &&
+           failure.Message.Contains("autre espace de travail", StringComparison.OrdinalIgnoreCase),
+        "Une référence vers un autre workspace doit être refusée explicitement.");
+});
+
+static Task TestMissingClientRecordCreatesClientTemplateAsync() => WithDynamicServiceAsync(async service =>
+{
+    var sourceTemplate = await service.CreateTemplateAsync("Modèle source");
+    await service.AddBlockAsync(sourceTemplate.Template.Id, "Informations");
+    var clientId = Guid.NewGuid();
+
+    var clientTemplate = await service.EnsureClientTemplateAsync(clientId, sourceTemplate.Template.Id);
+    var record = await service.GetRecordForExternalEntityAsync(clientId);
+
+    Assert(clientTemplate.Template.OwnerClientId == clientId,
+        "Le template créé doit être propre au client.");
+    Assert(record is not null && record.Record.TemplateId == clientTemplate.Template.Id,
+        "L’enregistrement client doit pointer vers le template créé.");
+});
+
+static Task TestConcurrentClientTemplateCreationSingleRecordAsync() => WithDynamicServiceAsync(async service =>
+{
+    var sourceTemplate = await service.CreateTemplateAsync("Modèle source");
+    await service.AddBlockAsync(sourceTemplate.Template.Id, "Informations");
+    var clientId = Guid.NewGuid();
+
+    var templates = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ =>
+        service.EnsureClientTemplateAsync(clientId, sourceTemplate.Template.Id)));
+
+    Assert(templates.Select(template => template.Template.Id).Distinct().Count() == 1,
+        "Les appels concurrents doivent retourner le même template client.");
+    var record = await service.GetRecordForExternalEntityAsync(clientId);
+    Assert(record is not null && record.Record.TemplateId == templates[0].Template.Id,
+        "Le record client doit pointer vers le template retourné.");
+
+    using var raw = new SQLite.SQLiteConnection(Path.Combine(FileSystem.AppDataDirectory, "ultimate-manager.db3"));
+    Assert(raw.Table<EntityRecord>().Count(item => item.ExternalEntityId == clientId) == 1,
+        "Les appels concurrents ont créé plusieurs records pour le même client.");
+    Assert(raw.Table<EntityTemplate>().Count(item => item.OwnerClientId == clientId) == 1,
+        "Les appels concurrents ont créé plusieurs templates privés pour le même client.");
+});
 
 static async Task TestCompleteBackupRestoreFailsClosedAsync()
 {

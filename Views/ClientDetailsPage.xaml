@@ -14,6 +14,7 @@
                                HorizontalOptions="Center" />
 
             <VerticalStackLayout IsVisible="{Binding CurrentClient, Converter={StaticResource NullToFalseConverter}}"
+                                 IsEnabled="{Binding IsLoading, Converter={StaticResource InverseBooleanConverter}}"
                                  Spacing="4">
                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
                     <Button Text="✎"
@@ -160,7 +161,10 @@
                 </VerticalStackLayout>
             </VerticalStackLayout>
 
-            <Grid IsVisible="{Binding IsEditing, Converter={StaticResource InverseBooleanConverter}}" ColumnDefinitions="*,*" ColumnSpacing="12">
+            <Grid IsVisible="{Binding IsEditing, Converter={StaticResource InverseBooleanConverter}}"
+                  IsEnabled="{Binding IsLoading, Converter={StaticResource InverseBooleanConverter}}"
+                  ColumnDefinitions="*,*"
+                  ColumnSpacing="12">
                 <Button Text="Modifier" Clicked="OnModifyClicked" />
                 <Button Text="Supprimer"
                         Grid.Column="1"

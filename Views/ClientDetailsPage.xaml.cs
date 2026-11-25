@@ -37,7 +37,17 @@ public partial class ClientDetailsPage : ContentPage, IQueryAttributable
         }
     }
 
-    private Task LoadAsync() => _viewModel.LoadAsync(_clientId);
+    private async Task LoadAsync()
+    {
+        try
+        {
+            await _viewModel.LoadAsync(_clientId);
+        }
+        catch (Exception exception)
+        {
+            await DisplayAlertAsync("Chargement impossible", exception.Message, "OK");
+        }
+    }
 
     protected override async void OnAppearing()
     {

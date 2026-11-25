@@ -42,12 +42,18 @@ public sealed class ClientDynamicRecordViewModel(
 
     public async Task LoadAsync(Guid clientId, Guid templateId, CancellationToken cancellationToken = default)
     {
+        var record = await _formService.GetOrCreateRecordAsync(clientId, templateId, cancellationToken);
+        await LoadAsync(record, cancellationToken);
+    }
+
+    public async Task LoadAsync(EntityRecordModel record, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(record);
         IsBusy = true;
         OnPropertyChanged(nameof(IsBusy));
         try
         {
-            var record = await _formService.GetOrCreateRecordAsync(clientId, templateId, cancellationToken);
-            var template = await _formService.GetTemplateAsync(templateId, cancellationToken)
+            var template = await _formService.GetTemplateAsync(record.Record.TemplateId, cancellationToken)
                 ?? throw new InvalidOperationException("Le modèle demandé n’existe pas.");
             _recordId = record.Record.Id;
             _isDraft = false;

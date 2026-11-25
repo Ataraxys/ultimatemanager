@@ -114,17 +114,6 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
         CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var existingRecord = await _database.ReadAsync(connection => connection.Table<EntityRecord>()
-            .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId &&
-                             record.ExternalEntityId == externalEntityId)
-            .OrderByDescending(record => record.UpdatedAt)
-            .FirstOrDefaultAsync(), cancellationToken);
-        if (existingRecord is not null)
-        {
-            return await GetTemplateAsync(existingRecord.TemplateId, cancellationToken)
-                ?? throw new InvalidOperationException("Le template de la fiche client est introuvable.");
-        }
-
         var source = sourceTemplateId == Guid.Empty
             ? null
             : await GetTemplateAsync(sourceTemplateId, cancellationToken)
@@ -151,8 +140,19 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             UpdatedAt = now
         };
 
+        EntityRecord? existingRecord = null;
         await _database.ExecuteTransactionAsync(connection =>
         {
+            existingRecord = connection.Table<EntityRecord>()
+                .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId &&
+                                 record.ExternalEntityId == externalEntityId)
+                .OrderByDescending(record => record.UpdatedAt)
+                .FirstOrDefault();
+            if (existingRecord is not null)
+            {
+                return;
+            }
+
             connection.Insert(clientTemplate);
             var instances = new List<BlockInstance>();
             if (source is not null)
@@ -198,8 +198,64 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             }
         }, cancellationToken);
 
+        if (existingRecord is not null)
+        {
+            await EnsureExistingRecordTemplateAsync(existingRecord, cancellationToken);
+            return await GetTemplateAsync(existingRecord.TemplateId, cancellationToken)
+                ?? throw new InvalidOperationException("Le template de la fiche client n’a pas pu être restauré.");
+        }
+
         return await GetTemplateAsync(clientTemplate.Id, cancellationToken)
             ?? throw new InvalidOperationException("Le template de la fiche client est introuvable.");
+    }
+
+    private async Task EnsureExistingRecordTemplateAsync(
+        EntityRecord record,
+        CancellationToken cancellationToken)
+    {
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            var currentRecord = connection.Find<EntityRecord>(record.Id);
+            if (currentRecord is null || currentRecord.WorkspaceId != _workspaceContext.WorkspaceId)
+            {
+                throw new InvalidOperationException("La fiche client n’existe plus dans cet espace de travail.");
+            }
+
+            if (currentRecord.TemplateId == Guid.Empty)
+            {
+                throw new InvalidOperationException("La fiche client ne contient pas d’identifiant de template valide.");
+            }
+
+            var template = connection.Find<EntityTemplate>(currentRecord.TemplateId);
+            if (template is not null)
+            {
+                if (template.WorkspaceId != currentRecord.WorkspaceId)
+                {
+                    throw new InvalidOperationException(
+                        "Le template associé à cette fiche appartient à un autre espace de travail.");
+                }
+
+                return;
+            }
+
+            // Restore only the missing parent row. Reusing the original ID keeps
+            // any surviving block definitions and field values associated.
+            var now = DateTime.UtcNow;
+            connection.Insert(new EntityTemplate
+            {
+                Id = currentRecord.TemplateId,
+                WorkspaceId = currentRecord.WorkspaceId,
+                OwnerClientId = currentRecord.ExternalEntityId == Guid.Empty
+                    ? null
+                    : currentRecord.ExternalEntityId,
+                Name = $"Fiche de {currentRecord.ExternalEntityId:N}",
+                EntityType = string.IsNullOrWhiteSpace(currentRecord.EntityType)
+                    ? "Client"
+                    : currentRecord.EntityType,
+                CreatedAt = currentRecord.CreatedAt == default ? now : currentRecord.CreatedAt,
+                UpdatedAt = now
+            });
+        }, cancellationToken);
     }
 
     public async Task<EntityRecordModel> CreateClientWithDraftAsync(
