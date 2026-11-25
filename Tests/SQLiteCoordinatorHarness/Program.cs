@@ -1,5 +1,6 @@
 using SQLitePCL;
 using System.Text.Json;
+using System.IO.Compression;
 using UltimateManager.Models;
 using UltimateManager.Models.DynamicForms;
 using UltimateManager.Services;
@@ -48,7 +49,15 @@ var tests = new (string Name, Func<Task> Test)[]
     ("38_SAVE_AND_RELOAD_AFTER_RESTART", TestSaveAndReloadAfterRestartAsync),
     ("39_TEMPLATE_SWITCH_PRESERVES_EXISTING_DATA", TestTemplateSwitchPreservesExistingDataAsync),
     ("40_USED_TEMPLATES_REMAIN_AVAILABLE_IN_WORKSPACE", TestUsedTemplatesRemainAvailableAsync),
-    ("41_COMPLETE_BACKUP_RESTORE_FAILS_CLOSED", TestCompleteBackupRestoreFailsClosedAsync)
+    ("41_COMPLETE_BACKUP_RESTORE_FAILS_CLOSED", TestCompleteBackupRestoreFailsClosedAsync),
+    ("42_CLIENT_DRAFT_CREATION_ATOMIC_AND_REMAPS_VALUES", TestClientDraftCreationAtomicAndRemapsValuesAsync),
+    ("43_DRAFT_TEMPLATE_SWITCH_AND_CANCEL_NO_WRITES", TestDraftTemplateSwitchAndCancelNoWritesAsync),
+    ("44_WORKSPACE_ISOLATION_AND_CLIENT_CASCADE", TestWorkspaceIsolationAndClientCascadeAsync),
+    ("45_LEGACY_CLIENT_SCHEMA_MIGRATION_IDEMPOTENT", TestLegacyClientSchemaMigrationIdempotentAsync),
+    ("46_COMPLETE_BACKUP_WORKSPACE_SCOPE_AND_TEMP_CLEANUP", TestCompleteBackupWorkspaceScopeAndTempCleanupAsync),
+    ("47_CLIENT_EDIT_SAVE_CREATES_DRAFT_ONCE_AND_LOADS_PERSISTED_TEMPLATE", TestClientEditSaveCreatesDraftOnceAsync),
+    ("48_DYNAMIC_BLOCK_FIELD_DELETE_CASCADE", TestDynamicBlockFieldDeleteCascadeAsync),
+    ("49_COMPLETE_BACKUP_FAILURE_CLEANS_TEMP", TestCompleteBackupFailureCleansTempAsync)
 };
 
 var failed = 0;
@@ -59,6 +68,7 @@ foreach (var (name, test) in tests)
         await test();
         Console.WriteLine($"PASS {name}");
     }
+
     catch (NotSupportedException exception)
     {
         Console.WriteLine($"NOT_TESTED {name}: {exception.Message}");
@@ -67,6 +77,10 @@ foreach (var (name, test) in tests)
     {
         failed++;
         Console.WriteLine($"FAIL {name}: {exception.GetType().Name}: {exception.Message}");
+    }
+    finally
+    {
+        await TestCoordinatorRegistry.DisposeAllAsync();
     }
 }
 
@@ -482,7 +496,7 @@ static Task TestClientNoIndependentConnectionAsync()
         System.Reflection.BindingFlags.NonPublic |
         System.Reflection.BindingFlags.Public);
     Assert(fields.All(field => field.FieldType != typeof(SQLite.SQLiteAsyncConnection)), "SqliteClientService contient encore une connexion indépendante.");
-    var constructor = typeof(SqliteClientService).GetConstructor([typeof(ISqliteDatabase), typeof(IClientBackupService)]);
+    var constructor = typeof(SqliteClientService).GetConstructor([typeof(ISqliteDatabase), typeof(IWorkspaceContext), typeof(IClientBackupService)]);
     Assert(constructor is not null, "Le constructeur injectant ISqliteDatabase est absent.");
     return Task.CompletedTask;
 }
@@ -506,13 +520,15 @@ static async Task TestClientHistoricalDataAsync()
     var root = CreateTemporaryDirectory();
     var path = Path.Combine(root, "historical.db3");
     var coordinator = new SQLiteDatabaseCoordinator(path);
+    var workspace = new WorkspaceContextStub(Guid.NewGuid());
     var backup = new ClientBackupStub();
     try
     {
         await coordinator.ExecuteWriteAsync(connection => connection.CreateTableAsync<Client>());
         var historical = CreateClient("Hedy", "Lamarr");
+        historical.WorkspaceId = Guid.Empty;
         await coordinator.ExecuteWriteAsync(connection => connection.InsertAsync(historical));
-        var service = new SqliteClientService(coordinator, backup);
+        var service = new SqliteClientService(coordinator, workspace, backup);
         var result = await service.GetByIdAsync(historical.Id);
         Assert(result?.LastName == "Lamarr", "La donnée historique n'est pas compatible avec le service migré.");
     }
@@ -528,10 +544,12 @@ static async Task TestDynamicFieldBatchRollbackAsync()
     var root = CreateTemporaryDirectory();
     var previousAppDataDirectory = FileSystem.AppDataDirectory;
     SqliteDynamicFormService? service = null;
+    SQLiteDatabaseCoordinator? coordinator = null;
     try
     {
         FileSystem.AppDataDirectory = root;
-        service = new SqliteDynamicFormService(new WorkspaceContextStub(Guid.NewGuid()));
+        coordinator = CreateTestCoordinator(root);
+        service = new SqliteDynamicFormService(coordinator, new WorkspaceContextStub(Guid.NewGuid()));
         var template = await service.CreateTemplateAsync("Test client");
         var block = await service.AddBlockAsync(template.Template.Id, "Coordonnées");
         var field = await service.AddFieldAsync(block.Id, "Téléphone", FieldType.ShortText);
@@ -559,9 +577,521 @@ static async Task TestDynamicFieldBatchRollbackAsync()
             await service.DisposeAsync();
         }
 
+        if (coordinator is not null)
+        {
+            await coordinator.DisposeAsync();
+            TestCoordinatorRegistry.Remove(coordinator);
+        }
+
         FileSystem.AppDataDirectory = previousAppDataDirectory;
         DeleteTemporaryDirectory(root);
     }
+}
+
+static async Task TestClientDraftCreationAtomicAndRemapsValuesAsync()
+{
+    var root = CreateTemporaryDirectory();
+    var previous = FileSystem.AppDataDirectory;
+    SqliteDynamicFormService? service = null;
+    SQLiteDatabaseCoordinator? coordinator = null;
+    try
+    {
+        FileSystem.AppDataDirectory = root;
+        coordinator = CreateTestCoordinator(root);
+        var workspace = new WorkspaceContextStub(Guid.NewGuid());
+        service = new SqliteDynamicFormService(coordinator, workspace);
+        var client = CreateClient("Brouillon", "Test");
+        var blockId = Guid.NewGuid();
+        var fieldId = Guid.NewGuid();
+        var draft = new TemplateDefinition
+        {
+            Template = new EntityTemplate { Id = Guid.NewGuid(), Name = "Modèle choisi", EntityType = "Client" },
+            Blocks =
+            [
+                new BlockDefinitionModel
+                {
+                    Block = new BlockDefinition { Id = blockId, Name = "Informations", DisplayOrder = 0 },
+                    Fields = [new FieldDefinition { Id = fieldId, Label = "Courriel", FieldType = FieldType.Email, DisplayOrder = 0 }]
+                }
+            ]
+        };
+        var templatesBefore = await service.GetTemplatesAsync();
+
+        var created = await service.CreateClientWithDraftAsync(
+            client,
+            draft,
+            new Dictionary<Guid, string> { [fieldId] = "\"qa@example.test\"" });
+
+        Assert(created.Record.ExternalEntityId == client.Id, "Le record créé ne référence pas le client attendu.");
+        Assert(created.Record.WorkspaceId == workspace.WorkspaceId, "Le record n'est pas isolé dans le Workspace courant.");
+        Assert(created.Record.TemplateId != draft.Template.Id, "Le template temporaire aurait dû être cloné avec un nouvel identifiant.");
+        var persistedField = created.Blocks.SelectMany(item => item.Values).Single();
+        Assert(persistedField.FieldDefinitionId != fieldId, "L'identifiant temporaire du champ n'a pas été remappé.");
+        Assert(persistedField.ValueJson == "\"qa@example.test\"", "La valeur du brouillon n'a pas été conservée.");
+        var templatesAfter = await service.GetTemplatesAsync();
+        Assert(templatesAfter.Count == templatesBefore.Count + 1, "La création doit ajouter exactement un template privé.");
+
+        await AssertThrowsAsync<InvalidOperationException>(() => service.CreateClientWithDraftAsync(
+            client,
+            draft,
+            new Dictionary<Guid, string> { [fieldId] = "\"ne pas enregistrer\"" }));
+        var templatesAfterDuplicate = await service.GetTemplatesAsync();
+        Assert(templatesAfterDuplicate.Count == templatesAfter.Count, "L'échec d'une création dupliquée a laissé un template orphelin.");
+        var existing = await service.GetRecordForExternalEntityAsync(client.Id)
+            ?? throw new InvalidOperationException("Le record initial a disparu après le rejet du doublon.");
+        Assert(existing.Record.Id == created.Record.Id, "Le rejet du doublon a modifié le record existant.");
+
+        var rollbackClient = CreateClient("Rollback", "Test");
+        var invalidDraft = new TemplateDefinition
+        {
+            Template = new EntityTemplate { Id = Guid.NewGuid(), Name = "Brouillon invalide", EntityType = "Client" },
+            Blocks = [new BlockDefinitionModel { Block = new BlockDefinition { Id = Guid.NewGuid(), Name = null!, DisplayOrder = 0 } }]
+        };
+        _ = await CaptureExceptionAsync(() => service.CreateClientWithDraftAsync(rollbackClient, invalidDraft, new Dictionary<Guid, string>()));
+        var rollbackArtifacts = await coordinator.ReadAsync(async connection =>
+            new
+            {
+                Client = await connection.Table<Client>().Where(item => item.Id == rollbackClient.Id).FirstOrDefaultAsync(),
+                TemplateCount = await connection.Table<EntityTemplate>().CountAsync(),
+                Record = await connection.Table<EntityRecord>().Where(record => record.ExternalEntityId == rollbackClient.Id).FirstOrDefaultAsync()
+            });
+        Assert(rollbackArtifacts.Client is null, "Le rollback a laissé le client inséré.");
+        Assert(rollbackArtifacts.TemplateCount == templatesAfter.Count, "Le rollback a laissé le template inséré.");
+        Assert(rollbackArtifacts.Record is null, "Le rollback a laissé le record inséré.");
+    }
+    finally
+    {
+        if (service is not null)
+        {
+            await service.DisposeAsync();
+        }
+
+        if (coordinator is not null)
+        {
+            await coordinator.DisposeAsync();
+            TestCoordinatorRegistry.Remove(coordinator);
+        }
+
+        FileSystem.AppDataDirectory = previous;
+        DeleteTemporaryDirectory(root);
+    }
+}
+
+static async Task TestDraftTemplateSwitchAndCancelNoWritesAsync()
+{
+    var service = new DynamicFormServiceStub();
+    var viewModel = new UltimateManager.ViewModels.ClientDynamicRecordViewModel(
+        service,
+        new DynamicFieldValueSerializer(),
+        new MapProviderStub(),
+        new AutomaticBackupStub());
+    var templateA = CreateDraftTemplate(
+        "A",
+        ("Email", FieldType.Email),
+        ("Nom", FieldType.ShortText));
+    var templateB = CreateDraftTemplate(
+        "B",
+        (" eMaIl ", FieldType.Email),
+        ("Nom", FieldType.ShortText));
+
+    await viewModel.LoadDraftAsync(templateA);
+    var fieldsA = viewModel.Blocks.SelectMany(block => block.Fields).ToList();
+    fieldsA.Single(field => field.Label == "Email").Value = "qa@example.test";
+    fieldsA.Single(field => field.Label == "Nom").Value = "Client A";
+
+    await viewModel.LoadDraftAsync(templateB);
+    var fieldsB = viewModel.Blocks.SelectMany(block => block.Fields).ToList();
+    Assert(fieldsB.Single(field => field.Label == " eMaIl ").Value == "qa@example.test", "La valeur compatible ne suit pas le champ renommé par casse/espaces.");
+    Assert(fieldsB.Single(field => field.Label == "Nom").Value == "Client A", "La valeur compatible n'a pas été conservée pour le second champ.");
+
+    var ambiguousTemplate = CreateDraftTemplate("C", ("Email", FieldType.Email), (" email ", FieldType.Email));
+    await viewModel.LoadDraftAsync(ambiguousTemplate);
+    Assert(viewModel.Blocks.SelectMany(block => block.Fields).All(field => string.IsNullOrEmpty(field.Value)),
+        "Les champs ambigus du template cible ne doivent pas recevoir une valeur transférée.");
+    Assert(service.PersistenceWrites == 0 && service.PersistedTemplates.Count == 0 && service.PersistedRecords.Count == 0,
+        "La sélection/changement de template ne doit pas écrire en base.");
+
+    viewModel.ResetDraft();
+    Assert(viewModel.Blocks.Count == 0, "L'annulation doit vider le brouillon en mémoire.");
+    Assert(service.PersistenceWrites == 0 && service.PersistedTemplates.Count == 0 && service.PersistedRecords.Count == 0,
+        "L'annulation d'un brouillon doit laisser les données persistantes intactes.");
+}
+
+static async Task TestClientEditSaveCreatesDraftOnceAsync()
+{
+    var formService = new DynamicFormServiceStub();
+    var actualTemplateId = Guid.NewGuid();
+    formService.ActualTemplateId = actualTemplateId;
+    var recordViewModel = new UltimateManager.ViewModels.ClientDynamicRecordViewModel(
+        formService,
+        new DynamicFieldValueSerializer(),
+        new MapProviderStub(),
+        new AutomaticBackupStub());
+    var viewModel = new UltimateManager.ViewModels.ClientEditViewModel(
+        new ClientServiceStub(),
+        new MapProviderStub(),
+        formService,
+        recordViewModel);
+    var template = CreateDraftTemplate("Default", ("Email", FieldType.Email));
+
+    await recordViewModel.LoadDraftAsync(template);
+    viewModel.Load(null);
+    // Load creates the new client state; the form draft is attached as it is in the page workflow.
+    viewModel.FirstName = "Test";
+    viewModel.LastName = "Client";
+
+    var saved = await viewModel.SaveAsync();
+
+    Assert(saved, "SaveAsync a refusé la création d'un client valide.");
+    Assert(formService.PersistenceWrites == 1, "La création atomique doit être appelée exactement une fois.");
+    Assert(formService.LastLoadedTemplateId == actualTemplateId,
+        $"Le ViewModel a rechargé {formService.LastLoadedTemplateId} au lieu du template persisté {actualTemplateId}.");
+    Assert(viewModel.IsEditing, "Le ViewModel doit passer en mode édition après la création.");
+}
+
+static Task TestDynamicBlockFieldDeleteCascadeAsync() => WithDynamicServiceAsync(async service =>
+{
+    var template = await service.CreateTemplateAsync("Suppression");
+    var block = await service.AddBlockAsync(template.Template.Id, "Bloc principal");
+    var fieldToDelete = await service.AddFieldAsync(block.Id, "À supprimer", FieldType.ShortText);
+    var retainedField = await service.AddFieldAsync(block.Id, "À garder", FieldType.ShortText);
+    var record = await service.CreateRecordAsync(template.Template.Id);
+    await service.SaveFieldValuesAsync(record.Record.Id, new Dictionary<Guid, string>
+    {
+        [fieldToDelete.Id] = "\"supprimé\"",
+        [retainedField.Id] = "\"gardé\""
+    });
+
+    await service.DeleteFieldAsync(fieldToDelete.Id);
+    var afterFieldDelete = await service.GetRecordAsync(record.Record.Id)
+        ?? throw new InvalidOperationException("Record absent après suppression du champ.");
+    Assert(afterFieldDelete.Blocks.SelectMany(item => item.Values).All(value => value.FieldDefinitionId != fieldToDelete.Id),
+        "La suppression du champ a laissé une valeur orpheline.");
+    Assert(ValueOf(afterFieldDelete, retainedField.Id) == "\"gardé\"", "La valeur voisine a été supprimée avec le champ.");
+
+    await service.DeleteBlockAsync(block.Id);
+    var afterBlockDelete = await service.GetRecordAsync(record.Record.Id)
+        ?? throw new InvalidOperationException("Record absent après suppression du bloc.");
+    Assert(afterBlockDelete.Blocks.Count == 0, "L'instance du bloc supprimé reste présente.");
+    Assert(afterBlockDelete.Blocks.SelectMany(item => item.Values).All(value => value.FieldDefinitionId != retainedField.Id),
+        "La suppression du bloc a laissé des valeurs orphelines.");
+});
+
+static async Task TestCompleteBackupFailureCleansTempAsync()
+{
+    var root = CreateTemporaryDirectory();
+    var previous = FileSystem.AppDataDirectory;
+    CompleteBackupService? service = null;
+    SQLiteDatabaseCoordinator? coordinator = null;
+    try
+    {
+        FileSystem.AppDataDirectory = root;
+        var databasePath = Path.Combine(root, "ultimate-manager.db3");
+        var workspaceId = Guid.NewGuid();
+        using (var seed = new SQLite.SQLiteConnection(databasePath))
+        {
+            seed.CreateTable<Workspace>();
+            seed.CreateTable<Client>();
+            seed.CreateTable<EntityTemplate>();
+            seed.CreateTable<BlockDefinition>();
+            seed.CreateTable<FieldDefinition>();
+            seed.CreateTable<EntityRecord>();
+            seed.CreateTable<BlockInstance>();
+            seed.CreateTable<FieldValue>();
+            var now = DateTime.UtcNow;
+            seed.Insert(new Workspace { Id = workspaceId, Name = "Backup incomplet", CreatedAt = now });
+            var client = CreateClient("Sans", "Pièce jointe");
+            client.WorkspaceId = workspaceId;
+            var template = new EntityTemplate { Id = Guid.NewGuid(), WorkspaceId = workspaceId, Name = "Docs", CreatedAt = now, UpdatedAt = now };
+            var block = new BlockDefinition { Id = Guid.NewGuid(), TemplateId = template.Id, Name = "Documents" };
+            var field = new FieldDefinition { Id = Guid.NewGuid(), BlockDefinitionId = block.Id, Label = "Fichier", FieldType = FieldType.Document };
+            var record = new EntityRecord { Id = Guid.NewGuid(), WorkspaceId = workspaceId, TemplateId = template.Id, ExternalEntityId = client.Id, CreatedAt = now, UpdatedAt = now };
+            seed.Insert(client);
+            seed.Insert(template);
+            seed.Insert(block);
+            seed.Insert(field);
+            seed.Insert(record);
+            seed.Insert(new FieldValue
+            {
+                Id = Guid.NewGuid(), EntityRecordId = record.Id, FieldDefinitionId = field.Id,
+                ValueJson = new DynamicFieldValueSerializer().Serialize(new DocumentValue { FileName = "missing.pdf", FilePath = Path.Combine(root, "missing.pdf") }),
+                UpdatedAt = now
+            });
+        }
+
+        coordinator = CreateTestCoordinator(root);
+        service = new CompleteBackupService(coordinator, new WorkspaceContextStub(workspaceId), new ClientBackupStub(), new DynamicFieldValueSerializer());
+        await AssertThrowsAsync<FileNotFoundException>(() => service.CreateAsync());
+        Assert(!File.Exists(service.BackupFilePath + ".tmp"), "Un échec de backup a laissé un ZIP temporaire.");
+        Assert(!File.Exists(service.BackupFilePath), "Un backup final ne doit pas être publié après échec.");
+    }
+    finally
+    {
+        if (service is not null) await service.DisposeAsync();
+        if (coordinator is not null)
+        {
+            await coordinator.DisposeAsync();
+            TestCoordinatorRegistry.Remove(coordinator);
+        }
+
+        FileSystem.AppDataDirectory = previous;
+        DeleteTemporaryDirectory(root);
+    }
+}
+
+static TemplateDefinition CreateDraftTemplate(string name, params (string Label, FieldType Type)[] fields)
+{
+    var block = new BlockDefinition { Id = Guid.NewGuid(), Name = "Informations", DisplayOrder = 0 };
+    return new TemplateDefinition
+    {
+        Template = new EntityTemplate { Id = Guid.NewGuid(), Name = name, EntityType = "Client" },
+        Blocks =
+        [
+            new BlockDefinitionModel
+            {
+                Block = block,
+                Fields = fields.Select((field, index) => new FieldDefinition
+                {
+                    Id = Guid.NewGuid(),
+                    BlockDefinitionId = block.Id,
+                    Label = field.Label,
+                    FieldType = field.Type,
+                    DisplayOrder = index
+                }).ToList()
+            }
+        ]
+    };
+}
+
+static async Task TestWorkspaceIsolationAndClientCascadeAsync()
+{
+    var root = CreateTemporaryDirectory();
+    var previous = FileSystem.AppDataDirectory;
+    SQLiteDatabaseCoordinator? coordinator = null;
+    SqliteDynamicFormService? dynamicA = null;
+    SqliteDynamicFormService? dynamicB = null;
+    try
+    {
+        FileSystem.AppDataDirectory = root;
+        coordinator = CreateTestCoordinator(root);
+        var workspaceA = new WorkspaceContextStub(Guid.NewGuid());
+        var workspaceB = new WorkspaceContextStub(Guid.NewGuid());
+        var backupA = new ClientBackupStub();
+        var backupB = new ClientBackupStub();
+        var clientsA = new SqliteClientService(coordinator, workspaceA, backupA);
+        var clientsB = new SqliteClientService(coordinator, workspaceB, backupB);
+        dynamicA = new SqliteDynamicFormService(coordinator, workspaceA);
+        dynamicB = new SqliteDynamicFormService(coordinator, workspaceB);
+
+        var source = await dynamicA.CreateTemplateAsync("Source partagé");
+        var sharedBlock = await dynamicA.AddBlockAsync(source.Template.Id, "Données");
+        var sharedField = await dynamicA.AddFieldAsync(sharedBlock.Id, "Valeur", FieldType.ShortText);
+        var clientA = CreateClient("Client", "Alpha");
+        var clientB = CreateClient("Client", "Beta");
+        await clientsA.CreateAsync(clientA);
+        await clientsA.CreateAsync(clientB);
+        var privateA = await dynamicA.EnsureClientTemplateAsync(clientA.Id, source.Template.Id);
+        var privateB = await dynamicA.EnsureClientTemplateAsync(clientB.Id, source.Template.Id);
+        var recordA = await dynamicA.GetRecordForExternalEntityAsync(clientA.Id)
+            ?? throw new InvalidOperationException("Record A manquant.");
+        var recordB = await dynamicA.GetRecordForExternalEntityAsync(clientB.Id)
+            ?? throw new InvalidOperationException("Record B manquant.");
+        var fieldA = privateA.Blocks.SelectMany(block => block.Fields).Single().Id;
+        var fieldB = privateB.Blocks.SelectMany(block => block.Fields).Single().Id;
+        await dynamicA.SaveFieldValueAsync(recordA.Record.Id, fieldA, "\"A\"");
+        await dynamicA.SaveFieldValueAsync(recordB.Record.Id, fieldB, "\"B\"");
+
+        Assert((await clientsA.GetAllAsync()).Count == 2, "Workspace A ne voit pas ses clients.");
+        Assert((await clientsB.GetAllAsync()).Count == 0, "Workspace B voit des clients de Workspace A.");
+        Assert(await clientsB.GetByIdAsync(clientA.Id) is null, "GetById expose un client d'un autre Workspace.");
+        Assert((await clientsB.SearchAsync("Alpha")).Count == 0, "La recherche expose un client d'un autre Workspace.");
+        clientA.City = "Modification interdite";
+        await AssertThrowsAsync<InvalidOperationException>(() => clientsB.UpdateAsync(clientA));
+        await clientsB.DeleteAsync(clientA.Id);
+        Assert(await clientsA.GetByIdAsync(clientA.Id) is not null, "Une suppression inter-Workspace a supprimé le client.");
+
+        await clientsA.DeleteAsync(clientA.Id);
+        Assert(await clientsA.GetByIdAsync(clientA.Id) is null, "Le client supprimé reste présent.");
+        Assert(await dynamicA.GetRecordAsync(recordA.Record.Id) is null, "Le record du client supprimé reste présent.");
+        Assert(await dynamicA.GetRecordAsync(recordB.Record.Id) is not null, "Le record de l'autre client a été supprimé.");
+        Assert(await dynamicA.GetTemplateAsync(source.Template.Id) is not null, "Le template source partagé a été supprimé.");
+        Assert(await dynamicA.GetTemplateAsync(privateB.Template.Id) is not null, "Le template privé du second client a été supprimé.");
+        var retained = await dynamicA.GetRecordAsync(recordB.Record.Id)
+            ?? throw new InvalidOperationException("Le record du second client a disparu.");
+        Assert(retained.Blocks.SelectMany(block => block.Values).Single(value => value.FieldDefinitionId == fieldB).ValueJson == "\"B\"",
+            "La valeur dynamique du second client a été modifiée.");
+
+        var workspaceBClient = CreateClient("Autre", "Espace");
+        await clientsB.CreateAsync(workspaceBClient);
+        Assert((await clientsB.GetAllAsync()).Select(client => client.Id).SequenceEqual([workspaceBClient.Id]),
+            "Workspace B ne voit pas uniquement son propre client.");
+        Assert(backupA.LastClients.All(client => client.WorkspaceId == workspaceA.WorkspaceId), "Le backup client A contient un autre Workspace.");
+        Assert(backupB.LastClients.All(client => client.WorkspaceId == workspaceB.WorkspaceId), "Le backup client B contient un autre Workspace.");
+    }
+    finally
+    {
+        if (dynamicA is not null) await dynamicA.DisposeAsync();
+        if (dynamicB is not null) await dynamicB.DisposeAsync();
+        if (coordinator is not null)
+        {
+            await coordinator.DisposeAsync();
+            TestCoordinatorRegistry.Remove(coordinator);
+        }
+
+        FileSystem.AppDataDirectory = previous;
+        DeleteTemporaryDirectory(root);
+    }
+}
+
+static async Task TestLegacyClientSchemaMigrationIdempotentAsync()
+{
+    var root = CreateTemporaryDirectory();
+    var path = Path.Combine(root, "legacy-clients.db3");
+    var workspaceId = Guid.NewGuid();
+    var legacyClient = CreateClient("Client historique", "Conservé");
+    try
+    {
+        using (var legacyConnection = new SQLite.SQLiteConnection(path))
+        {
+            legacyConnection.CreateTable<LegacyClient>();
+            legacyConnection.Insert(new LegacyClient
+            {
+                Id = legacyClient.Id,
+                FirstName = legacyClient.FirstName,
+                LastName = legacyClient.LastName,
+                PhoneNumber = legacyClient.PhoneNumber,
+                Email = legacyClient.Email,
+                Address = legacyClient.Address,
+                PostalCode = legacyClient.PostalCode,
+                City = legacyClient.City,
+                Country = legacyClient.Country,
+                Latitude = legacyClient.Latitude,
+                Longitude = legacyClient.Longitude,
+                Comment = legacyClient.Comment,
+                CreatedAt = legacyClient.CreatedAt,
+                UpdatedAt = legacyClient.UpdatedAt
+            });
+        }
+
+        var coordinator = new SQLiteDatabaseCoordinator(path);
+        TestCoordinatorRegistry.Add(coordinator);
+        var backup = new ClientBackupStub();
+        var service = new SqliteClientService(coordinator, new WorkspaceContextStub(workspaceId), backup);
+        var migrated = await service.GetByIdAsync(legacyClient.Id);
+        Assert(migrated?.LastName == legacyClient.LastName && migrated.WorkspaceId == workspaceId,
+            "La migration n'a pas conservé les données historiques ou affecté le Workspace courant.");
+        await service.GetAllAsync();
+        var columns = await coordinator.ReadAsync(connection => connection.GetTableInfoAsync("Clients"));
+        Assert(columns.Any(column => column.Name == nameof(Client.WorkspaceId)), "La colonne WorkspaceId n'a pas été ajoutée.");
+        var stored = await coordinator.ReadAsync(connection => connection.FindAsync<Client>(legacyClient.Id));
+        Assert(stored?.WorkspaceId == workspaceId, "Le rattachement historique n'a pas persisté.");
+
+        var secondCoordinator = new SQLiteDatabaseCoordinator(path);
+        TestCoordinatorRegistry.Add(secondCoordinator);
+        var secondService = new SqliteClientService(secondCoordinator, new WorkspaceContextStub(workspaceId), new ClientBackupStub());
+        var reloaded = await secondService.GetByIdAsync(legacyClient.Id);
+        Assert(reloaded?.WorkspaceId == workspaceId, "La migration répétée n'a pas conservé le Workspace.");
+        await secondCoordinator.DisposeAsync();
+        TestCoordinatorRegistry.Remove(secondCoordinator);
+        await coordinator.DisposeAsync();
+        TestCoordinatorRegistry.Remove(coordinator);
+    }
+    finally
+    {
+        await TestCoordinatorRegistry.DisposeAllAsync();
+        DeleteTemporaryDirectory(root);
+    }
+}
+
+static async Task TestCompleteBackupWorkspaceScopeAndTempCleanupAsync()
+{
+    var root = CreateTemporaryDirectory();
+    var previous = FileSystem.AppDataDirectory;
+    CompleteBackupService? service = null;
+    SQLiteDatabaseCoordinator? coordinator = null;
+    try
+    {
+        FileSystem.AppDataDirectory = root;
+        var databasePath = Path.Combine(root, "ultimate-manager.db3");
+        var activeWorkspaceId = Guid.NewGuid();
+        var otherWorkspaceId = Guid.NewGuid();
+        using (var seed = new SQLite.SQLiteConnection(databasePath))
+        {
+            foreach (var table in new Action[]
+                 {
+                     () => seed.CreateTable<Client>(), () => seed.CreateTable<Workspace>(),
+                     () => seed.CreateTable<EntityTemplate>(), () => seed.CreateTable<BlockDefinition>(),
+                     () => seed.CreateTable<FieldDefinition>(), () => seed.CreateTable<EntityRecord>(),
+                     () => seed.CreateTable<BlockInstance>(), () => seed.CreateTable<FieldValue>()
+                 })
+            {
+                table();
+            }
+
+            var now = DateTime.UtcNow;
+            seed.Insert(new Workspace { Id = activeWorkspaceId, Name = "Actif", CreatedAt = now });
+            seed.Insert(new Workspace { Id = otherWorkspaceId, Name = "Autre", CreatedAt = now });
+            InsertBackupWorkspaceData(seed, activeWorkspaceId, "A");
+            InsertBackupWorkspaceData(seed, otherWorkspaceId, "B");
+        }
+
+        coordinator = CreateTestCoordinator(root);
+        service = new CompleteBackupService(
+            coordinator,
+            new WorkspaceContextStub(activeWorkspaceId),
+            new ClientBackupStub(),
+            new DynamicFieldValueSerializer());
+        await service.CreateAsync();
+
+        Assert(File.Exists(service.BackupFilePath), "L'archive ZIP n'a pas été créée.");
+        Assert(!File.Exists(service.BackupFilePath + ".tmp"), "Le fichier temporaire n'a pas été déplacé/nettoyé.");
+        using var archive = ZipFile.OpenRead(service.BackupFilePath);
+        var clients = await ReadJsonEntryAsync<List<Client>>(archive, "clients.json");
+        var records = await ReadJsonEntryAsync<List<EntityRecord>>(archive, "records.json");
+        var templates = await ReadJsonEntryAsync<List<EntityTemplate>>(archive, "templates.json");
+        Assert(clients.Count == 1 && clients[0].FirstName == "A",
+            $"Le backup complet inclut les clients d'un Workspace étranger. Count={clients.Count}; items={string.Join(';', clients.Select(client => $"{client.FirstName}:{client.WorkspaceId}"))}; expectedWorkspace={activeWorkspaceId}.");
+        Assert(records.Count == 1 && records[0].WorkspaceId == activeWorkspaceId, "Le backup complet inclut les records d'un Workspace étranger.");
+        Assert(templates.All(template => template.WorkspaceId == activeWorkspaceId), "Le backup complet inclut les templates d'un Workspace étranger.");
+    }
+    finally
+    {
+        if (service is not null) await service.DisposeAsync();
+        if (coordinator is not null)
+        {
+            await coordinator.DisposeAsync();
+            TestCoordinatorRegistry.Remove(coordinator);
+        }
+
+        FileSystem.AppDataDirectory = previous;
+        DeleteTemporaryDirectory(root);
+    }
+}
+
+static void InsertBackupWorkspaceData(SQLite.SQLiteConnection connection, Guid workspaceId, string name)
+{
+    var now = DateTime.UtcNow;
+    var client = CreateClient(name, "Client");
+    client.WorkspaceId = workspaceId;
+    var template = new EntityTemplate { Id = Guid.NewGuid(), WorkspaceId = workspaceId, Name = name, CreatedAt = now, UpdatedAt = now };
+    var block = new BlockDefinition { Id = Guid.NewGuid(), TemplateId = template.Id, Name = "Données", DisplayOrder = 0 };
+    var field = new FieldDefinition { Id = Guid.NewGuid(), BlockDefinitionId = block.Id, Label = "Valeur", FieldType = FieldType.ShortText };
+    var record = new EntityRecord { Id = Guid.NewGuid(), WorkspaceId = workspaceId, TemplateId = template.Id, ExternalEntityId = client.Id, CreatedAt = now, UpdatedAt = now };
+    connection.Insert(client);
+    connection.Insert(template);
+    connection.Insert(block);
+    connection.Insert(field);
+    connection.Insert(record);
+    connection.Insert(new BlockInstance { Id = Guid.NewGuid(), EntityRecordId = record.Id, BlockDefinitionId = block.Id, Name = block.Name });
+    connection.Insert(new FieldValue { Id = Guid.NewGuid(), EntityRecordId = record.Id, FieldDefinitionId = field.Id, ValueJson = "\"" + name + "\"", UpdatedAt = now });
+}
+
+static async Task<T> ReadJsonEntryAsync<T>(ZipArchive archive, string entryName)
+{
+    var entry = archive.GetEntry(entryName) ?? throw new InvalidDataException($"Entrée {entryName} absente de l'archive.");
+    await using var stream = entry.Open();
+    return await JsonSerializer.DeserializeAsync<T>(stream, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+        ?? throw new InvalidDataException($"Entrée {entryName} illisible.");
 }
 
 static async Task WithDynamicServiceAsync(Func<SqliteDynamicFormService, Task> test)
@@ -569,10 +1099,12 @@ static async Task WithDynamicServiceAsync(Func<SqliteDynamicFormService, Task> t
     var root = CreateTemporaryDirectory();
     var previous = FileSystem.AppDataDirectory;
     SqliteDynamicFormService? service = null;
+    SQLiteDatabaseCoordinator? coordinator = null;
     try
     {
         FileSystem.AppDataDirectory = root;
-        service = new SqliteDynamicFormService(new WorkspaceContextStub(Guid.NewGuid()));
+        coordinator = CreateTestCoordinator(root);
+        service = new SqliteDynamicFormService(coordinator, new WorkspaceContextStub(Guid.NewGuid()));
         await test(service);
     }
     finally
@@ -580,6 +1112,12 @@ static async Task WithDynamicServiceAsync(Func<SqliteDynamicFormService, Task> t
         if (service is not null)
         {
             await service.DisposeAsync();
+        }
+
+        if (coordinator is not null)
+        {
+            await coordinator.DisposeAsync();
+            TestCoordinatorRegistry.Remove(coordinator);
         }
 
         FileSystem.AppDataDirectory = previous;
@@ -716,11 +1254,13 @@ static async Task TestUsedTemplatesRemainAvailableAsync()
     var root = CreateTemporaryDirectory();
     var previous = FileSystem.AppDataDirectory;
     SqliteDynamicFormService? service = null;
+    SQLiteDatabaseCoordinator? coordinator = null;
     try
     {
         FileSystem.AppDataDirectory = root;
         var workspaceId = Guid.NewGuid();
-        service = new SqliteDynamicFormService(new WorkspaceContextStub(workspaceId));
+        coordinator = CreateTestCoordinator(root);
+        service = new SqliteDynamicFormService(coordinator, new WorkspaceContextStub(workspaceId));
         var usedTemplate = await service.CreateTemplateAsync("Modèle utilisé");
         var unusedTemplate = await service.CreateTemplateAsync("Modèle disponible");
         var externalId = Guid.NewGuid();
@@ -735,7 +1275,10 @@ static async Task TestUsedTemplatesRemainAvailableAsync()
         Assert(reused.Record.Id == record.Record.Id, "Le template utilisé doit rester réutilisable pour la fiche existante.");
 
         await service.DisposeAsync();
-        service = new SqliteDynamicFormService(new WorkspaceContextStub(Guid.NewGuid()));
+        await coordinator.DisposeAsync();
+        TestCoordinatorRegistry.Remove(coordinator);
+        coordinator = CreateTestCoordinator(root);
+        service = new SqliteDynamicFormService(coordinator, new WorkspaceContextStub(Guid.NewGuid()));
         var otherWorkspaceTemplate = await service.CreateTemplateAsync("Autre Workspace");
         var otherWorkspaceTemplates = await service.GetTemplatesAsync();
         Assert(otherWorkspaceTemplates.Count == 1 && otherWorkspaceTemplates[0].Template.Id == otherWorkspaceTemplate.Template.Id,
@@ -748,6 +1291,12 @@ static async Task TestUsedTemplatesRemainAvailableAsync()
             await service.DisposeAsync();
         }
 
+        if (coordinator is not null)
+        {
+            await coordinator.DisposeAsync();
+            TestCoordinatorRegistry.Remove(coordinator);
+        }
+
         FileSystem.AppDataDirectory = previous;
         DeleteTemporaryDirectory(root);
     }
@@ -758,13 +1307,16 @@ static async Task TestCompleteBackupRestoreFailsClosedAsync()
     var root = CreateTemporaryDirectory();
     var previous = FileSystem.AppDataDirectory;
     CompleteBackupService? service = null;
+    SQLiteDatabaseCoordinator? coordinator = null;
     try
     {
         FileSystem.AppDataDirectory = root;
         var databasePath = Path.Combine(root, "ultimate-manager.db3");
         SeedBackupDatabase(databasePath);
         var before = CaptureBackupDatabase(databasePath);
+        coordinator = CreateTestCoordinator(root);
         service = new CompleteBackupService(
+            coordinator,
             new WorkspaceContextStub(Guid.NewGuid()),
             new ClientBackupStub(),
             new DynamicFieldValueSerializer());
@@ -783,6 +1335,12 @@ static async Task TestCompleteBackupRestoreFailsClosedAsync()
         if (service is not null)
         {
             await service.DisposeAsync();
+        }
+
+        if (coordinator is not null)
+        {
+            await coordinator.DisposeAsync();
+            TestCoordinatorRegistry.Remove(coordinator);
         }
 
         FileSystem.AppDataDirectory = previous;
@@ -925,7 +1483,8 @@ static async Task TestSaveAndReloadAfterRestartAsync()
         FileSystem.AppDataDirectory = root;
         var externalId = Guid.NewGuid();
         Guid templateId, fieldId, recordId;
-        var first = new SqliteDynamicFormService(workspace);
+        var firstCoordinator = CreateTestCoordinator(root);
+        var first = new SqliteDynamicFormService(firstCoordinator, workspace);
         try
         {
             var template = await first.CreateTemplateAsync("Fiche");
@@ -940,9 +1499,12 @@ static async Task TestSaveAndReloadAfterRestartAsync()
         finally
         {
             await first.DisposeAsync();
+            await firstCoordinator.DisposeAsync();
+            TestCoordinatorRegistry.Remove(firstCoordinator);
         }
 
-        var second = new SqliteDynamicFormService(workspace);
+        var secondCoordinator = CreateTestCoordinator(root);
+        var second = new SqliteDynamicFormService(secondCoordinator, workspace);
         try
         {
             var reloaded = await second.GetOrCreateRecordAsync(externalId, templateId);
@@ -953,6 +1515,8 @@ static async Task TestSaveAndReloadAfterRestartAsync()
         finally
         {
             await second.DisposeAsync();
+            await secondCoordinator.DisposeAsync();
+            TestCoordinatorRegistry.Remove(secondCoordinator);
         }
     }
     finally
@@ -967,14 +1531,18 @@ static async Task WithClientServiceAsync(Func<string, SqliteClientService, Clien
     var root = CreateTemporaryDirectory();
     var path = Path.Combine(root, "clients.db3");
     var coordinator = new SQLiteDatabaseCoordinator(path);
+    var workspace = new WorkspaceContextStub(Guid.NewGuid());
     var backup = new ClientBackupStub();
-    var service = new SqliteClientService(coordinator, backup);
+    var service = new SqliteClientService(coordinator, workspace, backup);
+    var dynamicService = new SqliteDynamicFormService(coordinator, workspace);
     try
     {
+        await dynamicService.GetTemplatesAsync();
         await test(path, service, backup);
     }
     finally
     {
+        await dynamicService.DisposeAsync();
         try { await coordinator.DisposeAsync(); } catch { }
         DeleteTemporaryDirectory(root);
     }
@@ -1042,6 +1610,13 @@ static string CreateTemporaryDirectory()
     return path;
 }
 
+static SQLiteDatabaseCoordinator CreateTestCoordinator(string root)
+{
+    var coordinator = new SQLiteDatabaseCoordinator(Path.Combine(root, "ultimate-manager.db3"));
+    TestCoordinatorRegistry.Add(coordinator);
+    return coordinator;
+}
+
 static void DeleteTemporaryDirectory(string path)
 {
     if (Directory.Exists(path))
@@ -1063,4 +1638,43 @@ sealed class WorkspaceContextStub(Guid workspaceId) : IWorkspaceContext
     public Guid WorkspaceId { get; } = workspaceId;
 
     public Task EnsureInitializedAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+}
+
+[SQLite.Table("Clients")]
+sealed class LegacyClient
+{
+    [SQLite.PrimaryKey]
+    public Guid Id { get; set; }
+    public string FirstName { get; set; } = string.Empty;
+    public string LastName { get; set; } = string.Empty;
+    public string PhoneNumber { get; set; } = string.Empty;
+    public string? Email { get; set; }
+    public string Address { get; set; } = string.Empty;
+    public string PostalCode { get; set; } = string.Empty;
+    public string City { get; set; } = string.Empty;
+    public string Country { get; set; } = string.Empty;
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+    public string Comment { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+static class TestCoordinatorRegistry
+{
+    private static readonly List<SQLiteDatabaseCoordinator> Coordinators = [];
+
+    public static void Add(SQLiteDatabaseCoordinator coordinator) => Coordinators.Add(coordinator);
+
+    public static void Remove(SQLiteDatabaseCoordinator coordinator) => Coordinators.Remove(coordinator);
+
+    public static async Task DisposeAllAsync()
+    {
+        foreach (var coordinator in Coordinators)
+        {
+            try { await coordinator.DisposeAsync(); } catch { }
+        }
+
+        Coordinators.Clear();
+    }
 }

@@ -1,32 +1,31 @@
 using SQLite;
+using UltimateManager.Models;
 using UltimateManager.Models.DynamicForms;
 
 namespace UltimateManager.Services;
 
 public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDisposable
 {
-    private readonly SQLiteAsyncConnection _connection;
+    private readonly ISqliteDatabase _database;
     private readonly IWorkspaceContext _workspaceContext;
     private readonly Task _initializationTask;
-    private readonly SemaphoreSlim _blockInstanceLock = new(1, 1);
-    private readonly SemaphoreSlim _recordCreationLock = new(1, 1);
 
-    public SqliteDynamicFormService(IWorkspaceContext workspaceContext)
+    public SqliteDynamicFormService(ISqliteDatabase database, IWorkspaceContext workspaceContext)
     {
+        _database = database;
         _workspaceContext = workspaceContext;
-        _connection = new SQLiteAsyncConnection(Path.Combine(FileSystem.AppDataDirectory, "ultimate-manager.db3"));
         _initializationTask = InitializeAsync();
     }
 
-    public ValueTask DisposeAsync() => new(_connection.CloseAsync());
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     public async Task<IReadOnlyList<TemplateDefinition>> GetTemplatesAsync(CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var templates = await _connection.Table<EntityTemplate>()
+        var templates = await _database.ReadAsync(connection => connection.Table<EntityTemplate>()
             .Where(template => template.WorkspaceId == _workspaceContext.WorkspaceId)
             .OrderBy(template => template.Name)
-            .ToListAsync();
+            .ToListAsync(), cancellationToken);
         var result = new List<TemplateDefinition>(templates.Count);
         foreach (var template in templates)
         {
@@ -39,7 +38,7 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
     public async Task<TemplateDefinition?> GetTemplateAsync(Guid templateId, CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var template = await _connection.FindAsync<EntityTemplate>(templateId);
+        var template = await _database.ReadAsync(connection => connection.FindAsync<EntityTemplate>(templateId), cancellationToken);
         return template is null || template.WorkspaceId != _workspaceContext.WorkspaceId
             ? null
             : await LoadTemplateAsync(template, cancellationToken);
@@ -50,35 +49,62 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
         CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var record = await _connection.Table<EntityRecord>()
+        var record = await _database.ReadAsync(connection => connection.Table<EntityRecord>()
             .Where(item => item.WorkspaceId == _workspaceContext.WorkspaceId &&
                            item.ExternalEntityId == externalEntityId)
             .OrderByDescending(item => item.UpdatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(), cancellationToken);
         return record is null ? null : await GetRecordAsync(record.Id, cancellationToken);
     }
 
     public async Task<TemplateDefinition> CloneTemplateAsync(
         Guid sourceTemplateId,
         string name,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? ownerClientId = null)
     {
         var source = await GetTemplateAsync(sourceTemplateId, cancellationToken)
             ?? throw new InvalidOperationException("Le template source est introuvable.");
-        var clone = await CreateTemplateAsync(name, source.Template.EntityType, cancellationToken);
-        foreach (var sourceBlock in source.Blocks)
+        var clone = new EntityTemplate
         {
-            var block = await AddBlockAsync(clone.Template.Id, sourceBlock.Block.Name, cancellationToken);
-            foreach (var sourceField in sourceBlock.Fields)
+            Id = Guid.NewGuid(),
+            WorkspaceId = _workspaceContext.WorkspaceId,
+            OwnerClientId = ownerClientId,
+            Name = name.Trim(),
+            EntityType = source.Template.EntityType,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            connection.Insert(clone);
+            foreach (var sourceBlock in source.Blocks)
             {
-                var field = await AddFieldAsync(block.Id, sourceField.Label, sourceField.FieldType, cancellationToken);
-                field.IsRequired = sourceField.IsRequired;
-                field.OptionsJson = sourceField.OptionsJson;
-                await UpdateFieldAsync(field, cancellationToken);
+                var block = new BlockDefinition
+                {
+                    Id = Guid.NewGuid(),
+                    TemplateId = clone.Id,
+                    Name = sourceBlock.Block.Name,
+                    DisplayOrder = sourceBlock.Block.DisplayOrder
+                };
+                connection.Insert(block);
+                foreach (var sourceField in sourceBlock.Fields)
+                {
+                    connection.Insert(new FieldDefinition
+                    {
+                        Id = Guid.NewGuid(),
+                        BlockDefinitionId = block.Id,
+                        Label = sourceField.Label,
+                        FieldType = sourceField.FieldType,
+                        DisplayOrder = sourceField.DisplayOrder,
+                        IsRequired = sourceField.IsRequired,
+                        OptionsJson = sourceField.OptionsJson
+                    });
+                }
             }
-        }
+        }, cancellationToken);
 
-        return await GetTemplateAsync(clone.Template.Id, cancellationToken)
+        return await GetTemplateAsync(clone.Id, cancellationToken)
             ?? throw new InvalidOperationException("Le template cloné est introuvable.");
     }
 
@@ -88,25 +114,200 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
         CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var existingRecord = await _connection.Table<EntityRecord>()
+        var existingRecord = await _database.ReadAsync(connection => connection.Table<EntityRecord>()
             .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId &&
                              record.ExternalEntityId == externalEntityId)
             .OrderByDescending(record => record.UpdatedAt)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(), cancellationToken);
         if (existingRecord is not null)
         {
             return await GetTemplateAsync(existingRecord.TemplateId, cancellationToken)
                 ?? throw new InvalidOperationException("Le template de la fiche client est introuvable.");
         }
 
-        var clientTemplate = sourceTemplateId == Guid.Empty
-            ? await CreateTemplateAsync($"Fiche de {externalEntityId:N}", "Client", cancellationToken)
-            : await CloneTemplateAsync(
-                sourceTemplateId,
-                $"Fiche de {externalEntityId:N}",
-                cancellationToken);
-        await GetOrCreateRecordAsync(externalEntityId, clientTemplate.Template.Id, cancellationToken);
-        return clientTemplate;
+        var source = sourceTemplateId == Guid.Empty
+            ? null
+            : await GetTemplateAsync(sourceTemplateId, cancellationToken)
+                ?? throw new InvalidOperationException("Le template source est introuvable.");
+        var now = DateTime.UtcNow;
+        var clientTemplate = new EntityTemplate
+        {
+            Id = Guid.NewGuid(),
+            WorkspaceId = _workspaceContext.WorkspaceId,
+            OwnerClientId = externalEntityId,
+            Name = $"Fiche de {externalEntityId:N}",
+            EntityType = source?.Template.EntityType ?? "Client",
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var record = new EntityRecord
+        {
+            Id = Guid.NewGuid(),
+            WorkspaceId = _workspaceContext.WorkspaceId,
+            TemplateId = clientTemplate.Id,
+            ExternalEntityId = externalEntityId,
+            EntityType = clientTemplate.EntityType,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            connection.Insert(clientTemplate);
+            var instances = new List<BlockInstance>();
+            if (source is not null)
+            {
+                foreach (var sourceBlock in source.Blocks)
+                {
+                    var block = new BlockDefinition
+                    {
+                        Id = Guid.NewGuid(),
+                        TemplateId = clientTemplate.Id,
+                        Name = sourceBlock.Block.Name,
+                        DisplayOrder = sourceBlock.Block.DisplayOrder
+                    };
+                    connection.Insert(block);
+                    instances.Add(new BlockInstance
+                    {
+                        Id = Guid.NewGuid(),
+                        EntityRecordId = record.Id,
+                        BlockDefinitionId = block.Id,
+                        Name = block.Name,
+                        DisplayOrder = block.DisplayOrder
+                    });
+                    foreach (var sourceField in sourceBlock.Fields)
+                    {
+                        connection.Insert(new FieldDefinition
+                        {
+                            Id = Guid.NewGuid(),
+                            BlockDefinitionId = block.Id,
+                            Label = sourceField.Label,
+                            FieldType = sourceField.FieldType,
+                            DisplayOrder = sourceField.DisplayOrder,
+                            IsRequired = sourceField.IsRequired,
+                            OptionsJson = sourceField.OptionsJson
+                        });
+                    }
+                }
+            }
+
+            connection.Insert(record);
+            foreach (var instance in instances)
+            {
+                connection.Insert(instance);
+            }
+        }, cancellationToken);
+
+        return await GetTemplateAsync(clientTemplate.Id, cancellationToken)
+            ?? throw new InvalidOperationException("Le template de la fiche client est introuvable.");
+    }
+
+    public async Task<EntityRecordModel> CreateClientWithDraftAsync(
+        Client client,
+        TemplateDefinition draft,
+        IReadOnlyDictionary<Guid, string> fieldValues,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        ArgumentNullException.ThrowIfNull(draft);
+        ArgumentNullException.ThrowIfNull(fieldValues);
+        await EnsureInitializedAsync(cancellationToken);
+        await EnsureClientTableAsync(cancellationToken);
+
+        var sourceFields = draft.Blocks.SelectMany(block => block.Fields).ToList();
+        if (sourceFields.Select(field => field.Id).Distinct().Count() != sourceFields.Count ||
+            fieldValues.Keys.Any(fieldId => sourceFields.All(field => field.Id != fieldId)))
+        {
+            throw new InvalidOperationException("La structure de la fiche contient des champs invalides ou dupliqués.");
+        }
+
+        var now = DateTime.UtcNow;
+        client.WorkspaceId = _workspaceContext.WorkspaceId;
+        client.CreatedAt = client.CreatedAt == default ? now : client.CreatedAt;
+        client.UpdatedAt = now;
+        var template = new EntityTemplate
+        {
+            Id = Guid.NewGuid(),
+            WorkspaceId = _workspaceContext.WorkspaceId,
+            OwnerClientId = client.Id,
+            Name = $"Fiche de {client.Id:N}",
+            EntityType = string.IsNullOrWhiteSpace(draft.Template.EntityType) ? "Client" : draft.Template.EntityType,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var record = new EntityRecord
+        {
+            Id = Guid.NewGuid(),
+            WorkspaceId = _workspaceContext.WorkspaceId,
+            TemplateId = template.Id,
+            ExternalEntityId = client.Id,
+            EntityType = template.EntityType,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var clonedFields = new Dictionary<Guid, Guid>();
+
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            if (connection.Find<Client>(client.Id) is not null)
+            {
+                throw new InvalidOperationException("Un client portant cet identifiant existe déjà.");
+            }
+
+            connection.Insert(client);
+            connection.Insert(template);
+            connection.Insert(record);
+            foreach (var draftBlock in draft.Blocks.OrderBy(item => item.Block.DisplayOrder))
+            {
+                var block = new BlockDefinition
+                {
+                    Id = Guid.NewGuid(),
+                    TemplateId = template.Id,
+                    Name = draftBlock.Block.Name.Trim(),
+                    DisplayOrder = draftBlock.Block.DisplayOrder
+                };
+                connection.Insert(block);
+                connection.Insert(new BlockInstance
+                {
+                    Id = Guid.NewGuid(),
+                    EntityRecordId = record.Id,
+                    BlockDefinitionId = block.Id,
+                    Name = block.Name,
+                    DisplayOrder = block.DisplayOrder
+                });
+
+                foreach (var draftField in draftBlock.Fields.OrderBy(item => item.DisplayOrder))
+                {
+                    var field = new FieldDefinition
+                    {
+                        Id = Guid.NewGuid(),
+                        BlockDefinitionId = block.Id,
+                        Label = draftField.Label.Trim(),
+                        FieldType = draftField.FieldType,
+                        DisplayOrder = draftField.DisplayOrder,
+                        IsRequired = draftField.IsRequired,
+                        OptionsJson = draftField.OptionsJson
+                    };
+                    connection.Insert(field);
+                    clonedFields.Add(draftField.Id, field.Id);
+                }
+            }
+
+            foreach (var (draftFieldId, valueJson) in fieldValues)
+            {
+                connection.Insert(new FieldValue
+                {
+                    Id = Guid.NewGuid(),
+                    EntityRecordId = record.Id,
+                    FieldDefinitionId = clonedFields[draftFieldId],
+                    ValueJson = valueJson,
+                    UpdatedAt = now
+                });
+            }
+        }, cancellationToken);
+
+        return await GetRecordAsync(record.Id, cancellationToken)
+            ?? throw new InvalidOperationException("La fiche client enregistrée est introuvable.");
     }
 
     public async Task<TemplateDefinition> CreateTemplateAsync(
@@ -125,25 +326,24 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             CreatedAt = now,
             UpdatedAt = now
         };
-        await _connection.InsertAsync(template);
+        await _database.ExecuteWriteAsync(connection => connection.InsertAsync(template), cancellationToken);
         return await LoadTemplateAsync(template, cancellationToken);
     }
 
     public async Task<TemplateDefinition> EnsureDefaultClientTemplateAsync(CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var existing = await _connection.Table<EntityTemplate>()
+        var existing = await _database.ReadAsync(connection => connection.Table<EntityTemplate>()
             .Where(template => template.WorkspaceId == _workspaceContext.WorkspaceId &&
                                template.EntityType == "Client" &&
                                template.Name == "Fiche client")
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(), cancellationToken);
         if (existing is not null)
         {
             await SetDefaultTemplateIfEmptyAsync(existing.Id);
             return await LoadTemplateAsync(existing, cancellationToken);
         }
 
-        var templateDefinition = await CreateTemplateAsync("Fiche client", "Client", cancellationToken);
         var blocks = new[]
         {
             (Name: "Informations personnelles", Fields: new[]
@@ -160,39 +360,57 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             })
         };
 
-        var blockOrder = 0;
-        foreach (var blockDefinition in blocks)
+        var template = new EntityTemplate
         {
-            var block = new BlockDefinition
+            Id = Guid.NewGuid(),
+            WorkspaceId = _workspaceContext.WorkspaceId,
+            Name = "Fiche client",
+            EntityType = "Client",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            connection.Insert(template);
+            var blockOrder = 0;
+            foreach (var blockDefinition in blocks)
             {
-                Id = Guid.NewGuid(),
-                TemplateId = templateDefinition.Template.Id,
-                Name = blockDefinition.Name,
-                DisplayOrder = blockOrder++
-            };
-            await _connection.InsertAsync(block);
-            var fieldOrder = 0;
-            foreach (var fieldDefinition in blockDefinition.Fields)
-            {
-                await _connection.InsertAsync(new FieldDefinition
+                var block = new BlockDefinition
                 {
                     Id = Guid.NewGuid(),
-                    BlockDefinitionId = block.Id,
-                    Label = fieldDefinition.Item1,
-                    FieldType = fieldDefinition.Item2,
-                    DisplayOrder = fieldOrder++
-                });
+                    TemplateId = template.Id,
+                    Name = blockDefinition.Name,
+                    DisplayOrder = blockOrder++
+                };
+                connection.Insert(block);
+                var fieldOrder = 0;
+                foreach (var fieldDefinition in blockDefinition.Fields)
+                {
+                    connection.Insert(new FieldDefinition
+                    {
+                        Id = Guid.NewGuid(),
+                        BlockDefinitionId = block.Id,
+                        Label = fieldDefinition.Item1,
+                        FieldType = fieldDefinition.Item2,
+                        DisplayOrder = fieldOrder++
+                    });
+                }
             }
-        }
-
-        await SetDefaultTemplateIfEmptyAsync(templateDefinition.Template.Id);
-        return await LoadTemplateAsync(templateDefinition.Template, cancellationToken);
+            var workspace = connection.Find<Workspace>(_workspaceContext.WorkspaceId)
+                ?? throw new InvalidOperationException("L’espace de travail est introuvable.");
+            if (workspace.DefaultTemplateId == Guid.Empty)
+            {
+                workspace.DefaultTemplateId = template.Id;
+                connection.Update(workspace);
+            }
+        }, cancellationToken);
+        return await LoadTemplateAsync(template, cancellationToken);
     }
 
     public async Task<TemplateDefinition> GetDefaultClientTemplateAsync(CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var workspace = await _connection.FindAsync<Workspace>(_workspaceContext.WorkspaceId);
+        var workspace = await _database.ReadAsync(connection => connection.FindAsync<Workspace>(_workspaceContext.WorkspaceId), cancellationToken);
         if (workspace is not null && workspace.DefaultTemplateId != Guid.Empty)
         {
             var template = await GetTemplateAsync(workspace.DefaultTemplateId, cancellationToken);
@@ -215,64 +433,49 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             throw new InvalidOperationException("Seuls les modèles Client peuvent être définis par défaut pour les clients.");
         }
 
-        var workspace = await _connection.FindAsync<Workspace>(_workspaceContext.WorkspaceId)
+        var workspace = await _database.ReadAsync(connection => connection.FindAsync<Workspace>(_workspaceContext.WorkspaceId), cancellationToken)
             ?? throw new InvalidOperationException("L’espace de travail est introuvable.");
         workspace.DefaultTemplateId = templateId;
-        await _connection.UpdateAsync(workspace);
+        await _database.ExecuteWriteAsync(connection => connection.UpdateAsync(workspace), cancellationToken);
     }
 
     private async Task SetDefaultTemplateIfEmptyAsync(Guid templateId)
     {
-        var workspace = await _connection.FindAsync<Workspace>(_workspaceContext.WorkspaceId);
+        var workspace = await _database.ReadAsync(connection => connection.FindAsync<Workspace>(_workspaceContext.WorkspaceId));
         if (workspace is null || workspace.DefaultTemplateId != Guid.Empty)
         {
             return;
         }
 
         workspace.DefaultTemplateId = templateId;
-        await _connection.UpdateAsync(workspace);
+        await _database.ExecuteWriteAsync(connection => connection.UpdateAsync(workspace));
     }
 
     public async Task DeleteTemplateAsync(Guid templateId, CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var template = await _connection.FindAsync<EntityTemplate>(templateId);
-        if (template is null || template.WorkspaceId != _workspaceContext.WorkspaceId)
+        await _database.ExecuteTransactionAsync(connection =>
         {
-            throw new InvalidOperationException("Le modèle demandé n’existe pas dans cet espace de travail.");
-        }
-
-        var workspace = await _connection.FindAsync<Workspace>(_workspaceContext.WorkspaceId);
-        if (workspace?.DefaultTemplateId == templateId)
-        {
-            throw new InvalidOperationException("Le modèle par défaut ne peut pas être supprimé.");
-        }
-
-        var isUsedByClient = await _connection.Table<EntityRecord>()
-            .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId && record.TemplateId == templateId)
-            .FirstOrDefaultAsync() is not null;
-        if (isUsedByClient)
-        {
-            throw new InvalidOperationException("Ce modèle est utilisé par une fiche client et ne peut pas être supprimé.");
-        }
-
-        var blocks = await _connection.Table<BlockDefinition>()
-            .Where(block => block.TemplateId == templateId)
-            .ToListAsync();
-        foreach (var block in blocks)
-        {
-            var fields = await _connection.Table<FieldDefinition>()
-                .Where(field => field.BlockDefinitionId == block.Id)
-                .ToListAsync();
-            foreach (var field in fields)
+            var template = connection.Find<EntityTemplate>(templateId);
+            if (template is null || template.WorkspaceId != _workspaceContext.WorkspaceId)
             {
-                await _connection.DeleteAsync(field);
+                throw new InvalidOperationException("Le modèle demandé n’existe pas dans cet espace de travail.");
             }
 
-            await _connection.DeleteAsync(block);
-        }
+            var workspace = connection.Find<Workspace>(_workspaceContext.WorkspaceId);
+            if (workspace?.DefaultTemplateId == templateId)
+            {
+                throw new InvalidOperationException("Le modèle par défaut ne peut pas être supprimé.");
+            }
 
-        await _connection.DeleteAsync(template);
+            if (connection.Table<EntityRecord>().Any(record => record.TemplateId == templateId))
+            {
+                throw new InvalidOperationException("Ce modèle est utilisé par une fiche client et ne peut pas être supprimé.");
+            }
+
+            DeleteTemplateDefinitions(connection, templateId);
+            connection.Delete(template);
+        }, cancellationToken);
     }
 
     public async Task<BlockDefinition> AddBlockAsync(
@@ -287,10 +490,16 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             Id = Guid.NewGuid(),
             TemplateId = template.Template.Id,
             Name = name.Trim(),
-            DisplayOrder = template.Blocks.Count
+            DisplayOrder = 0
         };
-        await _connection.InsertAsync(block);
-        await TouchTemplateAsync(template.Template.Id);
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            block.DisplayOrder = connection.Table<BlockDefinition>()
+                .Where(item => item.TemplateId == template.Template.Id)
+                .Count();
+            connection.Insert(block);
+            TouchTemplate(connection, template.Template.Id);
+        }, cancellationToken);
         return block;
     }
 
@@ -302,100 +511,127 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
     {
         var block = await GetBlockInWorkspaceAsync(blockId, cancellationToken)
             ?? throw new InvalidOperationException("Le bloc demandé n’existe pas dans cet espace de travail.");
-        var fieldCount = await _connection.Table<FieldDefinition>()
-            .Where(field => field.BlockDefinitionId == block.Id)
-            .CountAsync();
         var field = new FieldDefinition
         {
             Id = Guid.NewGuid(),
             BlockDefinitionId = block.Id,
             Label = label.Trim(),
             FieldType = fieldType,
-            DisplayOrder = fieldCount
+            DisplayOrder = 0
         };
-        await _connection.InsertAsync(field);
-        await TouchTemplateForBlockAsync(block.Id);
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            field.DisplayOrder = connection.Table<FieldDefinition>()
+                .Where(item => item.BlockDefinitionId == block.Id)
+                .Count();
+            connection.Insert(field);
+            TouchTemplateForBlock(connection, block.Id);
+        }, cancellationToken);
         return field;
     }
 
     public async Task UpdateBlockAsync(BlockDefinition block, CancellationToken cancellationToken = default)
     {
-        var existing = await GetBlockInWorkspaceAsync(block.Id, cancellationToken)
-            ?? throw new InvalidOperationException("Le bloc demandé n’existe pas dans cet espace de travail.");
-        existing.Name = block.Name.Trim();
-        existing.DisplayOrder = block.DisplayOrder;
-        await _connection.UpdateAsync(existing);
-        await TouchTemplateForBlockAsync(existing.Id);
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            var existing = GetBlockInWorkspace(connection, block.Id, _workspaceContext.WorkspaceId)
+                ?? throw new InvalidOperationException("Le bloc demandé n’existe pas dans cet espace de travail.");
+            existing.Name = block.Name.Trim();
+            existing.DisplayOrder = block.DisplayOrder;
+            connection.Update(existing);
+            TouchTemplateForBlock(connection, existing.Id);
+        }, cancellationToken);
     }
 
     public async Task UpdateFieldAsync(FieldDefinition field, CancellationToken cancellationToken = default)
     {
-        var existing = await GetFieldInWorkspaceAsync(field.Id, cancellationToken)
-            ?? throw new InvalidOperationException("Le champ demandé n’existe pas dans cet espace de travail.");
-        existing.Label = field.Label.Trim();
-        existing.FieldType = field.FieldType;
-        existing.IsRequired = field.IsRequired;
-        existing.OptionsJson = field.OptionsJson;
-        existing.DisplayOrder = field.DisplayOrder;
-        await _connection.UpdateAsync(existing);
-        await TouchTemplateForFieldAsync(existing.Id);
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            var existing = GetFieldInWorkspace(connection, field.Id, _workspaceContext.WorkspaceId)
+                ?? throw new InvalidOperationException("Le champ demandé n’existe pas dans cet espace de travail.");
+            existing.Label = field.Label.Trim();
+            existing.FieldType = field.FieldType;
+            existing.IsRequired = field.IsRequired;
+            existing.OptionsJson = field.OptionsJson;
+            existing.DisplayOrder = field.DisplayOrder;
+            connection.Update(existing);
+            TouchTemplateForField(connection, existing.Id);
+        }, cancellationToken);
     }
 
     public async Task DeleteBlockAsync(Guid blockId, CancellationToken cancellationToken = default)
     {
-        var block = await GetBlockInWorkspaceAsync(blockId, cancellationToken)
-            ?? throw new InvalidOperationException("Le bloc demandé n’existe pas dans cet espace de travail.");
-        var fields = await _connection.Table<FieldDefinition>()
-            .Where(field => field.BlockDefinitionId == block.Id)
-            .ToListAsync();
-        foreach (var field in fields)
+        await _database.ExecuteTransactionAsync(connection =>
         {
-            await _connection.DeleteAsync(field);
-        }
-
-        await _connection.DeleteAsync(block);
-        await NormalizeBlockOrderAsync(block.TemplateId);
-        await TouchTemplateAsync(block.TemplateId);
+            var block = GetBlockInWorkspace(connection, blockId, _workspaceContext.WorkspaceId)
+                ?? throw new InvalidOperationException("Le bloc demandé n’existe pas dans cet espace de travail.");
+            EnsureTemplateHasAtMostOneRecord(connection, block.TemplateId);
+            DeleteFieldValuesForBlock(connection, block);
+            connection.Execute("DELETE FROM BlockInstances WHERE BlockDefinitionId = ?", block.Id);
+            connection.Execute("DELETE FROM FieldDefinitions WHERE BlockDefinitionId = ?", block.Id);
+            connection.Delete(block);
+            NormalizeBlockOrder(connection, block.TemplateId);
+            TouchTemplate(connection, block.TemplateId);
+        }, cancellationToken);
     }
 
     public async Task DeleteFieldAsync(Guid fieldId, CancellationToken cancellationToken = default)
     {
-        var field = await GetFieldInWorkspaceAsync(fieldId, cancellationToken)
-            ?? throw new InvalidOperationException("Le champ demandé n’existe pas dans cet espace de travail.");
-        await _connection.DeleteAsync(field);
-        await NormalizeFieldOrderAsync(field.BlockDefinitionId);
-        await TouchTemplateForBlockAsync(field.BlockDefinitionId);
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            var field = GetFieldInWorkspace(connection, fieldId, _workspaceContext.WorkspaceId)
+                ?? throw new InvalidOperationException("Le champ demandé n’existe pas dans cet espace de travail.");
+            var block = connection.Find<BlockDefinition>(field.BlockDefinitionId)!;
+            EnsureTemplateHasAtMostOneRecord(connection, block.TemplateId);
+            DeleteFieldValuesForField(connection, block.TemplateId, field.Id);
+            connection.Delete(field);
+            NormalizeFieldOrder(connection, field.BlockDefinitionId);
+            TouchTemplate(connection, block.TemplateId);
+        }, cancellationToken);
     }
 
     public async Task MoveBlockAsync(Guid templateId, Guid blockId, int offset, CancellationToken cancellationToken = default)
     {
-        var template = await GetTemplateAsync(templateId, cancellationToken)
-            ?? throw new InvalidOperationException("Le modèle demandé n’existe pas dans cet espace de travail.");
-        var blocks = template.Blocks.Select(model => model.Block).ToList();
-        MoveItem<BlockDefinition>(blocks, block => block.Id == blockId, offset);
-        for (var index = 0; index < blocks.Count; index++)
+        await _database.ExecuteTransactionAsync(connection =>
         {
-            blocks[index].DisplayOrder = index;
-            await _connection.UpdateAsync(blocks[index]);
-        }
-        await TouchTemplateAsync(templateId);
+            var template = connection.Find<EntityTemplate>(templateId);
+            if (template is null || template.WorkspaceId != _workspaceContext.WorkspaceId)
+            {
+                throw new InvalidOperationException("Le modèle demandé n’existe pas dans cet espace de travail.");
+            }
+
+            var blocks = connection.Table<BlockDefinition>()
+                .Where(block => block.TemplateId == templateId)
+                .OrderBy(block => block.DisplayOrder)
+                .ToList();
+            MoveItem<BlockDefinition>(blocks, block => block.Id == blockId, offset);
+            for (var index = 0; index < blocks.Count; index++)
+            {
+                blocks[index].DisplayOrder = index;
+                connection.Update(blocks[index]);
+            }
+            TouchTemplate(connection, templateId);
+        }, cancellationToken);
     }
 
     public async Task MoveFieldAsync(Guid blockId, Guid fieldId, int offset, CancellationToken cancellationToken = default)
     {
-        var block = await GetBlockInWorkspaceAsync(blockId, cancellationToken)
-            ?? throw new InvalidOperationException("Le bloc demandé n’existe pas dans cet espace de travail.");
-        var fields = await _connection.Table<FieldDefinition>()
-            .Where(field => field.BlockDefinitionId == block.Id)
-            .OrderBy(field => field.DisplayOrder)
-            .ToListAsync();
-        MoveItem<FieldDefinition>(fields, field => field.Id == fieldId, offset);
-        for (var index = 0; index < fields.Count; index++)
+        await _database.ExecuteTransactionAsync(connection =>
         {
-            fields[index].DisplayOrder = index;
-            await _connection.UpdateAsync(fields[index]);
-        }
-        await TouchTemplateForBlockAsync(block.Id);
+            var block = GetBlockInWorkspace(connection, blockId, _workspaceContext.WorkspaceId)
+                ?? throw new InvalidOperationException("Le bloc demandé n’existe pas dans cet espace de travail.");
+            var fields = connection.Table<FieldDefinition>()
+                .Where(field => field.BlockDefinitionId == block.Id)
+                .OrderBy(field => field.DisplayOrder)
+                .ToList();
+            MoveItem<FieldDefinition>(fields, field => field.Id == fieldId, offset);
+            for (var index = 0; index < fields.Count; index++)
+            {
+                fields[index].DisplayOrder = index;
+                connection.Update(fields[index]);
+            }
+            TouchTemplate(connection, block.TemplateId);
+        }, cancellationToken);
     }
 
     public async Task SaveFieldValueAsync(
@@ -419,7 +655,7 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             return;
         }
 
-        await _connection.RunInTransactionAsync(connection =>
+        await _database.ExecuteTransactionAsync(connection =>
         {
             var record = connection.Find<EntityRecord>(recordId);
             if (record is null || record.WorkspaceId != _workspaceContext.WorkspaceId)
@@ -478,8 +714,6 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
             CreatedAt = now,
             UpdatedAt = now
         };
-        await _connection.InsertAsync(record);
-
         var blocks = new List<BlockInstanceModel>(template.Blocks.Count);
         foreach (var blockDefinition in template.Blocks)
         {
@@ -491,9 +725,17 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
                 Name = blockDefinition.Block.Name,
                 DisplayOrder = blockDefinition.Block.DisplayOrder
             };
-            await _connection.InsertAsync(block);
             blocks.Add(new BlockInstanceModel { Block = block, Values = [] });
         }
+
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            connection.Insert(record);
+            foreach (var block in blocks)
+            {
+                connection.Insert(block.Block);
+            }
+        }, cancellationToken);
 
         return new EntityRecordModel { Record = record, Blocks = blocks };
     }
@@ -504,265 +746,180 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
         CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
-        await _recordCreationLock.WaitAsync(cancellationToken);
-        try
+        var recordId = Guid.Empty;
+        await _database.ExecuteTransactionAsync(connection =>
         {
-        var existing = await _connection.Table<EntityRecord>()
-            .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId &&
-                             record.ExternalEntityId == externalEntityId &&
-                             record.TemplateId == templateId)
-            .FirstOrDefaultAsync();
-        if (existing is not null)
-        {
-            return await GetRecordAsync(existing.Id, cancellationToken)
-                ?? throw new InvalidOperationException("La fiche dynamique existante est inaccessible.");
-        }
+            var existing = connection.Table<EntityRecord>()
+                .Where(item => item.WorkspaceId == _workspaceContext.WorkspaceId && item.ExternalEntityId == externalEntityId)
+                .OrderByDescending(item => item.UpdatedAt)
+                .FirstOrDefault();
+            if (existing is not null)
+            {
+                if (existing.TemplateId != templateId)
+                {
+                    throw new InvalidOperationException(
+                        "Cette fiche possède déjà des données associées à un autre modèle. " +
+                        "Le changement de modèle est bloqué tant qu'une migration qui conserve ces données n'est pas disponible.");
+                }
 
-        var previousRecord = await _connection.Table<EntityRecord>()
-            .Where(record => record.WorkspaceId == _workspaceContext.WorkspaceId &&
-                             record.ExternalEntityId == externalEntityId)
-            .FirstOrDefaultAsync();
+                recordId = existing.Id;
+                return;
+            }
 
-        if (previousRecord is not null)
-        {
-            throw new InvalidOperationException(
-                "Cette fiche possède déjà des données associées à un autre modèle. " +
-                "Le changement de modèle est bloqué tant qu'une migration qui conserve ces données n'est pas disponible.");
-        }
+            var template = connection.Find<EntityTemplate>(templateId);
+            if (template is null || template.WorkspaceId != _workspaceContext.WorkspaceId)
+            {
+                throw new InvalidOperationException("Le modèle demandé n’existe pas dans cet espace de travail.");
+            }
 
-        var template = await GetTemplateAsync(templateId, cancellationToken)
-            ?? throw new InvalidOperationException("Le modèle demandé n’existe pas dans cet espace de travail.");
-        var now = DateTime.UtcNow;
-        var record = new EntityRecord
-        {
-            Id = Guid.NewGuid(),
-            WorkspaceId = _workspaceContext.WorkspaceId,
-            TemplateId = templateId,
-            ExternalEntityId = externalEntityId,
-            EntityType = template.Template.EntityType,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        var blocks = new List<BlockInstanceModel>(template.Blocks.Count);
-        foreach (var definition in template.Blocks)
-        {
-            var block = new BlockInstance
+            var now = DateTime.UtcNow;
+            var record = new EntityRecord
             {
                 Id = Guid.NewGuid(),
-                EntityRecordId = record.Id,
-                BlockDefinitionId = definition.Block.Id,
-                Name = definition.Block.Name,
-                DisplayOrder = definition.Block.DisplayOrder
+                WorkspaceId = _workspaceContext.WorkspaceId,
+                TemplateId = templateId,
+                ExternalEntityId = externalEntityId,
+                EntityType = template.EntityType,
+                CreatedAt = now,
+                UpdatedAt = now
             };
-            blocks.Add(new BlockInstanceModel { Block = block, Values = [] });
-        }
-
-        // Création atomique de la fiche et de ses instances. Une fiche existante liée à
-        // un autre modèle est refusée plus haut afin de préserver ses valeurs.
-        await _connection.RunInTransactionAsync(connection =>
-        {
+            recordId = record.Id;
             connection.Insert(record);
-            foreach (var model in blocks)
+            foreach (var definition in connection.Table<BlockDefinition>()
+                         .Where(item => item.TemplateId == templateId)
+                         .OrderBy(item => item.DisplayOrder)
+                         .ToList())
             {
-                connection.Insert(model.Block);
+                connection.Insert(new BlockInstance
+                {
+                    Id = Guid.NewGuid(),
+                    EntityRecordId = record.Id,
+                    BlockDefinitionId = definition.Id,
+                    Name = definition.Name,
+                    DisplayOrder = definition.DisplayOrder
+                });
             }
-        });
+        }, cancellationToken);
 
-        return new EntityRecordModel { Record = record, Blocks = blocks };
-        }
-        finally
-        {
-            _recordCreationLock.Release();
-        }
+        return await GetRecordAsync(recordId == Guid.Empty
+                ? throw new InvalidOperationException("La création de la fiche a échoué.")
+                : recordId,
+                cancellationToken)
+            ?? throw new InvalidOperationException("La fiche dynamique existante est inaccessible.");
     }
 
-    // Les blocs ajoutés au modèle après la création de la fiche n'ont pas d'instance :
-    // sans elle, leurs valeurs enregistrées n'étaient jamais relues (bloc « non modifiable »).
-    // La transaction rend lecture + insertion atomiques pour la base ; le verrou applicatif
-    // garantit en plus qu'un seul chargement réconcilie à la fois dans ce service (vérifié par
-    // le test 34 : la transaction seule laissait passer des doublons en chargements concurrents).
     // Aucune suppression ni écrasement : seules les instances absentes sont créées.
     private async Task EnsureBlockInstancesAsync(EntityRecord record)
     {
-        await _blockInstanceLock.WaitAsync();
-        try
+        await _database.ExecuteTransactionAsync(connection =>
         {
-            await _connection.RunInTransactionAsync(connection =>
+            var definitions = connection.Table<BlockDefinition>()
+                .Where(definition => definition.TemplateId == record.TemplateId)
+                .OrderBy(definition => definition.DisplayOrder)
+                .ToList();
+            var existingIds = connection.Table<BlockInstance>()
+                .Where(block => block.EntityRecordId == record.Id)
+                .ToList()
+                .Select(block => block.BlockDefinitionId)
+                .ToHashSet();
+            foreach (var definition in definitions.Where(definition => !existingIds.Contains(definition.Id)))
             {
-                var definitions = connection.Table<BlockDefinition>()
-                    .Where(definition => definition.TemplateId == record.TemplateId)
-                    .OrderBy(definition => definition.DisplayOrder)
-                    .ToList();
-                var existingIds = connection.Table<BlockInstance>()
-                    .Where(block => block.EntityRecordId == record.Id)
-                    .ToList()
-                    .Select(block => block.BlockDefinitionId)
-                    .ToHashSet();
-                foreach (var definition in definitions.Where(definition => !existingIds.Contains(definition.Id)))
+                connection.Insert(new BlockInstance
                 {
-                    connection.Insert(new BlockInstance
-                    {
-                        Id = Guid.NewGuid(),
-                        EntityRecordId = record.Id,
-                        BlockDefinitionId = definition.Id,
-                        Name = definition.Name,
-                        DisplayOrder = definition.DisplayOrder
-                    });
-                }
-            });
-        }
-        finally
-        {
-            _blockInstanceLock.Release();
-        }
-    }
-
-    private async Task DeleteRecordDataAsync(Guid recordId)
-    {
-        var values = await _connection.Table<FieldValue>()
-            .Where(value => value.EntityRecordId == recordId)
-            .ToListAsync();
-        foreach (var value in values)
-        {
-            await _connection.DeleteAsync(value);
-        }
-
-        var blocks = await _connection.Table<BlockInstance>()
-            .Where(block => block.EntityRecordId == recordId)
-            .ToListAsync();
-        foreach (var block in blocks)
-        {
-            await _connection.DeleteAsync(block);
-        }
-
-        await _connection.DeleteAsync<EntityRecord>(recordId);
+                    Id = Guid.NewGuid(),
+                    EntityRecordId = record.Id,
+                    BlockDefinitionId = definition.Id,
+                    Name = definition.Name,
+                    DisplayOrder = definition.DisplayOrder
+                });
+            }
+        });
     }
 
     public async Task<EntityRecordModel?> GetRecordAsync(Guid recordId, CancellationToken cancellationToken = default)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var record = await _connection.FindAsync<EntityRecord>(recordId);
+        var record = await _database.ReadAsync(connection => connection.FindAsync<EntityRecord>(recordId), cancellationToken);
         if (record is null || record.WorkspaceId != _workspaceContext.WorkspaceId)
         {
             return null;
         }
 
         await EnsureBlockInstancesAsync(record);
-        var allBlocks = await _connection.Table<BlockInstance>()
-            .Where(block => block.EntityRecordId == recordId)
-            .OrderBy(block => block.DisplayOrder)
-            .ToListAsync();
-        // Lecture tolérante, sans suppression : une seule instance par définition (doublons historiques
-        // ignorés, les valeurs sont rattachées aux champs) et instances orphelines écartées.
-        var definitionIds = (await _connection.Table<BlockDefinition>()
-            .Where(definition => definition.TemplateId == record.TemplateId)
-            .ToListAsync()).Select(definition => definition.Id).ToHashSet();
-        var blocks = allBlocks
-            .Where(block => definitionIds.Contains(block.BlockDefinitionId))
-            .GroupBy(block => block.BlockDefinitionId)
-            .Select(group => group.OrderBy(block => block.Id).First())
-            .OrderBy(block => block.DisplayOrder)
-            .ToList();
-        var values = await _connection.Table<FieldValue>()
-            .Where(value => value.EntityRecordId == recordId)
-            .ToListAsync();
-        var models = new List<BlockInstanceModel>(blocks.Count);
-        foreach (var block in blocks)
+        return await _database.ReadAsync(async connection =>
         {
-            var fieldDefinitions = await _connection.Table<FieldDefinition>()
-                .Where(field => field.BlockDefinitionId == block.BlockDefinitionId)
-                .ToListAsync();
-            var fieldIds = fieldDefinitions.Select(field => field.Id).ToHashSet();
-            models.Add(new BlockInstanceModel
+            var currentRecord = await connection.FindAsync<EntityRecord>(recordId);
+            if (currentRecord is null || currentRecord.WorkspaceId != _workspaceContext.WorkspaceId)
             {
-                Block = block,
-                Values = values.Where(value => fieldIds.Contains(value.FieldDefinitionId)).ToList()
-            });
-        }
+                return null;
+            }
 
-        return new EntityRecordModel { Record = record, Blocks = models };
+            var allBlocks = await connection.Table<BlockInstance>()
+                .Where(block => block.EntityRecordId == recordId)
+                .OrderBy(block => block.DisplayOrder)
+                .ToListAsync();
+            var definitions = await connection.Table<BlockDefinition>()
+                .Where(definition => definition.TemplateId == currentRecord.TemplateId)
+                .ToListAsync();
+            var definitionIds = definitions.Select(definition => definition.Id).ToHashSet();
+            var blocks = allBlocks
+                .Where(block => definitionIds.Contains(block.BlockDefinitionId))
+                .GroupBy(block => block.BlockDefinitionId)
+                .Select(group => group.OrderBy(block => block.Id).First())
+                .OrderBy(block => block.DisplayOrder)
+                .ToList();
+            var values = await connection.Table<FieldValue>()
+                .Where(value => value.EntityRecordId == recordId)
+                .ToListAsync();
+            var models = new List<BlockInstanceModel>(blocks.Count);
+            foreach (var block in blocks)
+            {
+                var fieldDefinitions = await connection.Table<FieldDefinition>()
+                    .Where(field => field.BlockDefinitionId == block.BlockDefinitionId)
+                    .ToListAsync();
+                var fieldIds = fieldDefinitions.Select(field => field.Id).ToHashSet();
+                models.Add(new BlockInstanceModel
+                {
+                    Block = block,
+                    Values = values.Where(value => fieldIds.Contains(value.FieldDefinitionId)).ToList()
+                });
+            }
+
+            return new EntityRecordModel { Record = currentRecord, Blocks = models };
+        }, cancellationToken);
     }
 
     private async Task<BlockDefinition?> GetBlockInWorkspaceAsync(Guid blockId, CancellationToken cancellationToken)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var block = await _connection.FindAsync<BlockDefinition>(blockId);
-        if (block is null)
+        return await _database.ReadAsync(async connection =>
         {
-            return null;
-        }
+            var block = await connection.FindAsync<BlockDefinition>(blockId);
+            if (block is null)
+            {
+                return null;
+            }
 
-        var template = await _connection.FindAsync<EntityTemplate>(block.TemplateId);
-        return template?.WorkspaceId == _workspaceContext.WorkspaceId ? block : null;
+            var template = await connection.FindAsync<EntityTemplate>(block.TemplateId);
+            return template?.WorkspaceId == _workspaceContext.WorkspaceId ? block : null;
+        }, cancellationToken);
     }
 
     private async Task<FieldDefinition?> GetFieldInWorkspaceAsync(Guid fieldId, CancellationToken cancellationToken)
     {
         await EnsureInitializedAsync(cancellationToken);
-        var field = await _connection.FindAsync<FieldDefinition>(fieldId);
-        if (field is null)
+        return await _database.ReadAsync(async connection =>
         {
-            return null;
-        }
+            var field = await connection.FindAsync<FieldDefinition>(fieldId);
+            if (field is null)
+            {
+                return null;
+            }
 
-        var block = await _connection.FindAsync<BlockDefinition>(field.BlockDefinitionId);
-        return block is null || await GetBlockInWorkspaceAsync(block.Id, cancellationToken) is null ? null : field;
-    }
-
-    private async Task TouchTemplateForBlockAsync(Guid blockId)
-    {
-        var block = await _connection.FindAsync<BlockDefinition>(blockId);
-        if (block is not null)
-        {
-            await TouchTemplateAsync(block.TemplateId);
-        }
-    }
-
-    private async Task TouchTemplateForFieldAsync(Guid fieldId)
-    {
-        var field = await _connection.FindAsync<FieldDefinition>(fieldId);
-        if (field is not null)
-        {
-            await TouchTemplateForBlockAsync(field.BlockDefinitionId);
-        }
-    }
-
-    private async Task TouchTemplateAsync(Guid templateId)
-    {
-        var template = await _connection.FindAsync<EntityTemplate>(templateId);
-        if (template is null || template.WorkspaceId != _workspaceContext.WorkspaceId)
-        {
-            return;
-        }
-
-        template.UpdatedAt = DateTime.UtcNow;
-        await _connection.UpdateAsync(template);
-    }
-
-    private async Task NormalizeBlockOrderAsync(Guid templateId)
-    {
-        var blocks = await _connection.Table<BlockDefinition>()
-            .Where(block => block.TemplateId == templateId)
-            .OrderBy(block => block.DisplayOrder)
-            .ToListAsync();
-        for (var index = 0; index < blocks.Count; index++)
-        {
-            blocks[index].DisplayOrder = index;
-            await _connection.UpdateAsync(blocks[index]);
-        }
-    }
-
-    private async Task NormalizeFieldOrderAsync(Guid blockId)
-    {
-        var fields = await _connection.Table<FieldDefinition>()
-            .Where(field => field.BlockDefinitionId == blockId)
-            .OrderBy(field => field.DisplayOrder)
-            .ToListAsync();
-        for (var index = 0; index < fields.Count; index++)
-        {
-            fields[index].DisplayOrder = index;
-            await _connection.UpdateAsync(fields[index]);
-        }
+            var block = await connection.FindAsync<BlockDefinition>(field.BlockDefinitionId);
+            var template = block is null ? null : await connection.FindAsync<EntityTemplate>(block.TemplateId);
+            return template?.WorkspaceId == _workspaceContext.WorkspaceId ? field : null;
+        }, cancellationToken);
     }
 
     private static void MoveItem<T>(IList<T> items, Func<T, bool> predicate, int offset)
@@ -794,21 +951,30 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
 
     private async Task<TemplateDefinition> LoadTemplateAsync(EntityTemplate template, CancellationToken cancellationToken)
     {
-        var blocks = await _connection.Table<BlockDefinition>()
-            .Where(block => block.TemplateId == template.Id)
-            .OrderBy(block => block.DisplayOrder)
-            .ToListAsync();
-        var models = new List<BlockDefinitionModel>(blocks.Count);
-        foreach (var block in blocks)
+        return await _database.ReadAsync(async connection =>
         {
-            var fields = await _connection.Table<FieldDefinition>()
-                .Where(field => field.BlockDefinitionId == block.Id)
-                .OrderBy(field => field.DisplayOrder)
-                .ToListAsync();
-            models.Add(new BlockDefinitionModel { Block = block, Fields = fields });
-        }
+            var current = await connection.FindAsync<EntityTemplate>(template.Id);
+            if (current is null || current.WorkspaceId != _workspaceContext.WorkspaceId)
+            {
+                return null;
+            }
 
-        return new TemplateDefinition { Template = template, Blocks = models };
+            var blocks = await connection.Table<BlockDefinition>()
+                .Where(block => block.TemplateId == current.Id)
+                .OrderBy(block => block.DisplayOrder)
+                .ToListAsync();
+            var models = new List<BlockDefinitionModel>(blocks.Count);
+            foreach (var block in blocks)
+            {
+                var fields = await connection.Table<FieldDefinition>()
+                    .Where(field => field.BlockDefinitionId == block.Id)
+                    .OrderBy(field => field.DisplayOrder)
+                    .ToListAsync();
+                models.Add(new BlockDefinitionModel { Block = block, Fields = fields });
+            }
+
+            return new TemplateDefinition { Template = current, Blocks = models };
+        }, cancellationToken) ?? throw new InvalidOperationException("Le modèle demandé n’existe pas dans cet espace de travail.");
     }
 
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
@@ -817,21 +983,198 @@ public sealed class SqliteDynamicFormService : IDynamicFormService, IAsyncDispos
         await _initializationTask.WaitAsync(cancellationToken);
     }
 
+    private async Task EnsureClientTableAsync(CancellationToken cancellationToken)
+    {
+        var exists = await _database.ReadAsync(async connection =>
+            await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'Clients'") == 1,
+            cancellationToken);
+        if (exists)
+        {
+            var columns = await _database.ReadAsync(connection => connection.GetTableInfoAsync("Clients"), cancellationToken);
+            if (columns.All(column => column.Name != nameof(Client.WorkspaceId)))
+            {
+                await _database.ExecuteWriteAsync(connection => connection.ExecuteAsync(
+                    "ALTER TABLE Clients ADD COLUMN WorkspaceId TEXT NOT NULL DEFAULT ''"), cancellationToken);
+            }
+        }
+
+        await _database.ExecuteWriteAsync(connection => connection.CreateTableAsync<Client>(), cancellationToken);
+        await _database.ExecuteWriteAsync(connection => connection.ExecuteAsync(
+            "UPDATE Clients SET WorkspaceId = ? WHERE WorkspaceId IS NULL OR WorkspaceId = '' OR WorkspaceId = ?",
+            _workspaceContext.WorkspaceId,
+            Guid.Empty), cancellationToken);
+    }
+
     private async Task InitializeAsync()
     {
-        await _connection.CreateTableAsync<EntityTemplate>();
-        await _connection.CreateTableAsync<BlockDefinition>();
-        await _connection.CreateTableAsync<FieldDefinition>();
-        await _connection.CreateTableAsync<EntityRecord>();
-        try
+        await _database.InitializeAsync();
+        var recordsTableExists = await _database.ReadAsync(async connection =>
+            await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'EntityRecords'") == 1);
+        if (recordsTableExists)
         {
-            await _connection.ExecuteAsync(
-                "ALTER TABLE EntityRecords ADD COLUMN ExternalEntityId TEXT NOT NULL DEFAULT ''");
+            var existingRecordColumns = await _database.ReadAsync(connection => connection.GetTableInfoAsync("EntityRecords"));
+            if (existingRecordColumns.All(column => column.Name != nameof(EntityRecord.ExternalEntityId)))
+            {
+                await _database.ExecuteWriteAsync(connection => connection.ExecuteAsync(
+                    "ALTER TABLE EntityRecords ADD COLUMN ExternalEntityId TEXT NOT NULL DEFAULT ''"));
+            }
         }
-        catch (SQLiteException)
+
+        await _database.ExecuteWriteAsync(async connection =>
         {
+            await connection.CreateTableAsync<EntityTemplate>();
+            await connection.CreateTableAsync<BlockDefinition>();
+            await connection.CreateTableAsync<FieldDefinition>();
+            await connection.CreateTableAsync<EntityRecord>();
+            await connection.CreateTableAsync<BlockInstance>();
+            await connection.CreateTableAsync<FieldValue>();
+        });
+
+        var templateColumns = await _database.ReadAsync(connection => connection.GetTableInfoAsync("EntityTemplates"));
+        if (templateColumns.All(column => column.Name != nameof(EntityTemplate.OwnerClientId)))
+        {
+            await _database.ExecuteWriteAsync(connection => connection.ExecuteAsync(
+                "ALTER TABLE EntityTemplates ADD COLUMN OwnerClientId TEXT NULL"));
         }
-        await _connection.CreateTableAsync<BlockInstance>();
-        await _connection.CreateTableAsync<FieldValue>();
+
+        await _database.ExecuteTransactionAsync(connection =>
+        {
+            var records = connection.Table<EntityRecord>()
+                .Where(record => record.ExternalEntityId != Guid.Empty)
+                .ToList();
+            foreach (var record in records)
+            {
+                var template = connection.Find<EntityTemplate>(record.TemplateId);
+                if (template is null || template.WorkspaceId != record.WorkspaceId || template.OwnerClientId is not null ||
+                    template.Name != $"Fiche de {record.ExternalEntityId:N}")
+                {
+                    continue;
+                }
+
+                template.OwnerClientId = record.ExternalEntityId;
+                connection.Update(template);
+            }
+        });
+    }
+
+    private static BlockDefinition? GetBlockInWorkspace(
+        SQLiteConnection connection,
+        Guid blockId,
+        Guid workspaceId)
+    {
+        var block = connection.Find<BlockDefinition>(blockId);
+        var template = block is null ? null : connection.Find<EntityTemplate>(block.TemplateId);
+        return template?.WorkspaceId == workspaceId ? block : null;
+    }
+
+    private static FieldDefinition? GetFieldInWorkspace(
+        SQLiteConnection connection,
+        Guid fieldId,
+        Guid workspaceId)
+    {
+        var field = connection.Find<FieldDefinition>(fieldId);
+        return field is not null && GetBlockInWorkspace(connection, field.BlockDefinitionId, workspaceId) is not null
+            ? field
+            : null;
+    }
+
+    private void TouchTemplate(SQLiteConnection connection, Guid templateId)
+    {
+        var template = connection.Find<EntityTemplate>(templateId);
+        if (template is null || template.WorkspaceId != _workspaceContext.WorkspaceId)
+        {
+            return;
+        }
+
+        template.UpdatedAt = DateTime.UtcNow;
+        connection.Update(template);
+    }
+
+    private void TouchTemplateForBlock(SQLiteConnection connection, Guid blockId)
+    {
+        var block = connection.Find<BlockDefinition>(blockId);
+        if (block is not null)
+        {
+            TouchTemplate(connection, block.TemplateId);
+        }
+    }
+
+    private void TouchTemplateForField(SQLiteConnection connection, Guid fieldId)
+    {
+        var field = connection.Find<FieldDefinition>(fieldId);
+        if (field is not null)
+        {
+            TouchTemplateForBlock(connection, field.BlockDefinitionId);
+        }
+    }
+
+    private void EnsureTemplateHasAtMostOneRecord(SQLiteConnection connection, Guid templateId)
+    {
+        var records = connection.Table<EntityRecord>()
+            .Where(record => record.TemplateId == templateId)
+            .ToList();
+        if (records.Count > 1 || records.Any(record => record.WorkspaceId != _workspaceContext.WorkspaceId))
+        {
+            throw new InvalidOperationException(
+                "La structure est utilisée par plusieurs fiches. Clonez le template avant de supprimer des blocs ou champs.");
+        }
+    }
+
+    private static void DeleteFieldValuesForBlock(SQLiteConnection connection, BlockDefinition block)
+    {
+        connection.Execute(
+            "DELETE FROM FieldValues WHERE EntityRecordId IN (SELECT Id FROM EntityRecords WHERE TemplateId = ?) " +
+            "AND FieldDefinitionId IN (SELECT Id FROM FieldDefinitions WHERE BlockDefinitionId = ?)",
+            block.TemplateId,
+            block.Id);
+    }
+
+    private static void DeleteFieldValuesForField(SQLiteConnection connection, Guid templateId, Guid fieldId)
+    {
+        connection.Execute(
+            "DELETE FROM FieldValues WHERE FieldDefinitionId = ? " +
+            "AND EntityRecordId IN (SELECT Id FROM EntityRecords WHERE TemplateId = ?)",
+            fieldId,
+            templateId);
+    }
+
+    private static void DeleteTemplateDefinitions(SQLiteConnection connection, Guid templateId)
+    {
+        var blocks = connection.Table<BlockDefinition>()
+            .Where(block => block.TemplateId == templateId)
+            .ToList();
+        foreach (var block in blocks)
+        {
+            DeleteFieldValuesForBlock(connection, block);
+            connection.Execute("DELETE FROM BlockInstances WHERE BlockDefinitionId = ?", block.Id);
+            connection.Execute("DELETE FROM FieldDefinitions WHERE BlockDefinitionId = ?", block.Id);
+            connection.Delete(block);
+        }
+    }
+
+    private static void NormalizeBlockOrder(SQLiteConnection connection, Guid templateId)
+    {
+        var blocks = connection.Table<BlockDefinition>()
+            .Where(block => block.TemplateId == templateId)
+            .OrderBy(block => block.DisplayOrder)
+            .ToList();
+        for (var index = 0; index < blocks.Count; index++)
+        {
+            blocks[index].DisplayOrder = index;
+            connection.Update(blocks[index]);
+        }
+    }
+
+    private static void NormalizeFieldOrder(SQLiteConnection connection, Guid blockId)
+    {
+        var fields = connection.Table<FieldDefinition>()
+            .Where(field => field.BlockDefinitionId == blockId)
+            .OrderBy(field => field.DisplayOrder)
+            .ToList();
+        for (var index = 0; index < fields.Count; index++)
+        {
+            fields[index].DisplayOrder = index;
+            connection.Update(fields[index]);
+        }
     }
 }

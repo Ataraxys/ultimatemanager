@@ -23,6 +23,8 @@ public sealed class EntityTemplate
     [Indexed]
     public Guid WorkspaceId { get; set; }
 
+    public Guid? OwnerClientId { get; set; }
+
     public string Name { get; set; } = string.Empty;
     public string EntityType { get; set; } = "Client";
     public DateTime CreatedAt { get; set; }

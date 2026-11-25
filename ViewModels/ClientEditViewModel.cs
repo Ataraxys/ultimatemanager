@@ -22,6 +22,7 @@ public partial class ClientEditViewModel(
     private DateTime _createdAt;
     private bool _isExistingClient;
     private Guid _workingTemplateId;
+    private Guid _sourceTemplateId;
     private bool _templateSelectionLoaded;
     private bool _structureEditing;
 
@@ -58,6 +59,22 @@ public partial class ClientEditViewModel(
                 OnPropertyChanged(nameof(SelectedTemplatePreview));
             }
         }
+    }
+
+    public void CancelDraft()
+    {
+        if (_isExistingClient)
+        {
+            return;
+        }
+
+        _dynamicRecordViewModel.ResetDraft();
+        _workingTemplateId = Guid.Empty;
+        _sourceTemplateId = Guid.Empty;
+        _templateSelectionLoaded = false;
+        SelectedTemplate = null;
+        OnPropertyChanged(nameof(SelectedTemplateId));
+        OnPropertyChanged(nameof(IsTemplateSelectionLoaded));
     }
 
     public Guid SelectedTemplateId => _workingTemplateId != Guid.Empty
@@ -119,6 +136,7 @@ public partial class ClientEditViewModel(
         _clientId = client?.Id ?? Guid.NewGuid();
         _createdAt = client?.CreatedAt ?? DateTime.UtcNow;
         _workingTemplateId = Guid.Empty;
+        _sourceTemplateId = Guid.Empty;
         _templateSelectionLoaded = false;
 
         FirstName = client?.FirstName ?? string.Empty;
@@ -205,12 +223,47 @@ public partial class ClientEditViewModel(
 
     private async Task PrepareWorkingTemplateAsync(EntityTemplate template, CancellationToken cancellationToken)
     {
-        var workingTemplate = template.Id == Guid.Empty
-            ? await _dynamicFormService.CreateTemplateAsync($"Fiche de {_clientId:N}", "Client", cancellationToken)
-            : await _dynamicFormService.CloneTemplateAsync(template.Id, $"Fiche de {_clientId:N}", cancellationToken);
-        _workingTemplateId = workingTemplate.Template.Id;
-        await _dynamicRecordViewModel.LoadAsync(_clientId, _workingTemplateId, cancellationToken);
+        var source = template.Id == Guid.Empty
+            ? new TemplateDefinition { Template = new EntityTemplate { Id = Guid.Empty, Name = "Fiche vide", EntityType = "Client" } }
+            : await _dynamicFormService.GetTemplateAsync(template.Id, cancellationToken)
+                ?? throw new InvalidOperationException("Le template sélectionné n’existe plus.");
+        _sourceTemplateId = template.Id;
+        _workingTemplateId = template.Id;
+        await _dynamicRecordViewModel.LoadDraftAsync(source, cancellationToken);
         OnPropertyChanged(nameof(SelectedTemplateId));
+    }
+
+    public async Task<bool> SaveNewClientAsync(CancellationToken cancellationToken = default)
+    {
+        if (_isExistingClient || !ValidateForSave() || IsBusy ||
+            !TryParseCoordinate(Latitude, out var latitudeValue) ||
+            !TryParseCoordinate(Longitude, out var longitudeValue))
+        {
+            return false;
+        }
+
+        var client = CreateClient(latitudeValue, longitudeValue);
+        try
+        {
+            IsBusy = true;
+            var draft = _dynamicRecordViewModel.CaptureDraftTemplate($"Fiche de {_clientId:N}");
+            var createdRecord = await _dynamicFormService.CreateClientWithDraftAsync(
+                client,
+                draft,
+                _dynamicRecordViewModel.CaptureDraftValues(),
+                cancellationToken);
+            _isExistingClient = true;
+            _workingTemplateId = Guid.Empty;
+            await _dynamicRecordViewModel.LoadAsync(_clientId, createdRecord.Record.TemplateId, cancellationToken);
+            OnPropertyChanged(nameof(IsEditing));
+            OnPropertyChanged(nameof(IsNewClient));
+            OnPropertyChanged(nameof(ClientId));
+            return true;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     public Task AddBlockAsync(string? name, CancellationToken cancellationToken = default) =>
@@ -242,6 +295,11 @@ public partial class ClientEditViewModel(
 
     public async Task<bool> SaveDynamicAsync(CancellationToken cancellationToken = default)
     {
+        if (!_isExistingClient)
+        {
+            return await _dynamicRecordViewModel.SaveAsync(cancellationToken);
+        }
+
         return await _dynamicRecordViewModel.SaveAsync(cancellationToken);
     }
 
@@ -306,38 +364,17 @@ public partial class ClientEditViewModel(
             return false;
         }
 
+        if (!IsEditing)
+        {
+            return await SaveNewClientAsync();
+        }
+
         try
         {
             IsBusy = true;
-            var client = new Client
-            {
-                Id = _clientId,
-                FirstName = FirstName.Trim(),
-                LastName = LastName.Trim(),
-                PhoneNumber = PhoneNumber.Trim(),
-                Email = string.IsNullOrWhiteSpace(Email) ? null : Email.Trim(),
-                Address = Address.Trim(),
-                PostalCode = PostalCode.Trim(),
-                City = City.Trim(),
-                Country = Country.Trim(),
-                Latitude = latitudeValue,
-                Longitude = longitudeValue,
-                Comment = Comment.Trim(),
-                CreatedAt = _createdAt,
-                UpdatedAt = DateTime.UtcNow
-            };
-
-            if (IsEditing)
-            {
-                await _clientService.UpdateAsync(client);
-            }
-            else
-            {
-                await _clientService.CreateAsync(client);
-            }
-
+            var client = CreateClient(latitudeValue, longitudeValue);
+            await _clientService.UpdateAsync(client);
             OnPropertyChanged(nameof(ClientId));
-
             return true;
         }
         finally
@@ -345,6 +382,24 @@ public partial class ClientEditViewModel(
             IsBusy = false;
         }
     }
+
+    private Client CreateClient(double? latitude, double? longitude) => new()
+    {
+        Id = _clientId,
+        FirstName = FirstName.Trim(),
+        LastName = LastName.Trim(),
+        PhoneNumber = PhoneNumber.Trim(),
+        Email = string.IsNullOrWhiteSpace(Email) ? null : Email.Trim(),
+        Address = Address.Trim(),
+        PostalCode = PostalCode.Trim(),
+        City = City.Trim(),
+        Country = Country.Trim(),
+        Latitude = latitude,
+        Longitude = longitude,
+        Comment = Comment.Trim(),
+        CreatedAt = _createdAt,
+        UpdatedAt = DateTime.UtcNow
+    };
 
     private static bool TryParseCoordinate(string? value, out double? coordinate)
     {

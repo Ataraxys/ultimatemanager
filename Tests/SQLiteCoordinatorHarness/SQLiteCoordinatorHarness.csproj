@@ -9,6 +9,7 @@
 
   <ItemGroup>
 	<PackageReference Include="sqlite-net-pcl" Version="1.11.285" />
+	<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -16,8 +17,8 @@
 	<Compile Include="..\..\Services\SQLiteDatabaseCoordinator.cs" Link="Production\SQLiteDatabaseCoordinator.cs" />
 	<Compile Include="..\..\Services\IClientService.cs" Link="Production\IClientService.cs" />
 	<Compile Include="..\..\Services\IClientBackupService.cs" Link="Production\IClientBackupService.cs" />
-	<Compile Include="..\..\Services\ICompleteBackupService.cs" Link="Production\ICompleteBackupService.cs" />
 	<Compile Include="..\..\Services\CompleteBackupService.cs" Link="Production\CompleteBackupService.cs" />
+	<Compile Include="..\..\Services\ICompleteBackupService.cs" Link="Production\ICompleteBackupService.cs" />
 	<Compile Include="..\..\Services\SqliteClientService.cs" Link="Production\SqliteClientService.cs" />
 	<Compile Include="..\..\Models\Client.cs" Link="Production\Client.cs" />
 	<Compile Include="..\..\Models\DynamicForms\FieldType.cs" Link="Production\FieldType.cs" />
@@ -26,7 +27,12 @@
 	<Compile Include="..\..\Models\DynamicForms\DynamicFormAggregates.cs" Link="Production\DynamicFormAggregates.cs" />
 	<Compile Include="..\..\Services\IWorkspaceContext.cs" Link="Production\IWorkspaceContext.cs" />
 	<Compile Include="..\..\Services\IDynamicFormService.cs" Link="Production\IDynamicFormService.cs" />
+	<Compile Include="..\..\Services\IAutomaticBackupService.cs" Link="Production\IAutomaticBackupService.cs" />
+	<Compile Include="..\..\Services\IMapProvider.cs" Link="Production\IMapProvider.cs" />
+	<Compile Include="..\..\Services\LocationResult.cs" Link="Production\LocationResult.cs" />
 	<Compile Include="..\..\Services\DynamicFieldValueSerializer.cs" Link="Production\DynamicFieldValueSerializer.cs" />
 	<Compile Include="..\..\Services\SqliteDynamicFormService.cs" Link="Production\SqliteDynamicFormService.cs" />
+	<Compile Include="..\..\ViewModels\ClientDynamicRecordViewModel.cs" Link="Production\ClientDynamicRecordViewModel.cs" />
+	<Compile Include="..\..\ViewModels\ClientEditViewModel.cs" Link="Production\ClientEditViewModel.cs" />
   </ItemGroup>
 </Project>

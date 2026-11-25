@@ -19,7 +19,9 @@ public sealed class ClientDynamicRecordViewModel(
     private readonly IAutomaticBackupService _automaticBackupService = automaticBackupService;
     private Guid _recordId;
     private Guid _templateId;
+    private bool _isDraft;
     private readonly Dictionary<Guid, string> _initialFieldValues = [];
+    private readonly Dictionary<(FieldType Type, string Label), string> _draftValuesByField = [];
 
     public ObservableCollection<DynamicRecordBlockItem> Blocks { get; } = [];
 
@@ -48,6 +50,7 @@ public sealed class ClientDynamicRecordViewModel(
             var template = await _formService.GetTemplateAsync(templateId, cancellationToken)
                 ?? throw new InvalidOperationException("Le modèle demandé n’existe pas.");
             _recordId = record.Record.Id;
+            _isDraft = false;
             _templateId = template.Template.Id;
             TemplateName = template.Template.Name;
             OnPropertyChanged(nameof(TemplateName));
@@ -92,9 +95,140 @@ public sealed class ClientDynamicRecordViewModel(
         }
     }
 
+    public async Task LoadDraftAsync(TemplateDefinition template, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        cancellationToken.ThrowIfCancellationRequested();
+        IsBusy = true;
+        OnPropertyChanged(nameof(IsBusy));
+        try
+        {
+            if (_isDraft)
+            {
+                var currentFields = Blocks.SelectMany(block => block.Fields).ToList();
+                var ambiguousKeys = currentFields
+                    .GroupBy(GetDraftFieldKey)
+                    .Where(group => group.Key.Label.Length > 0 && group.Count() > 1)
+                    .Select(group => group.Key)
+                    .ToList();
+                foreach (var key in ambiguousKeys)
+                {
+                    _draftValuesByField.Remove(key);
+                }
+
+                foreach (var group in currentFields.GroupBy(GetDraftFieldKey)
+                             .Where(group => group.Key.Label.Length > 0 && group.Count() == 1))
+                {
+                    _draftValuesByField[group.Key] = group.Single().SerializeValue();
+                }
+            }
+
+            _recordId = Guid.Empty;
+            _isDraft = true;
+            _templateId = template.Template.Id;
+            TemplateName = template.Template.Name;
+            OnPropertyChanged(nameof(TemplateName));
+            Blocks.Clear();
+            _initialFieldValues.Clear();
+            var fieldKeysById = template.Blocks.SelectMany(block => block.Fields)
+                .Select(field => (Field: field, Key: GetDraftFieldKey(field.FieldType, field.Label)))
+                .Where(item => item.Key.Label.Length > 0)
+                .GroupBy(item => item.Key)
+                .Where(group => group.Count() == 1)
+                .Select(group => group.Single())
+                .ToDictionary(item => item.Field.Id, item => item.Key);
+            foreach (var block in template.Blocks.OrderBy(item => item.Block.DisplayOrder))
+            {
+                var fieldDefinitions = block.Fields.OrderBy(field => field.DisplayOrder).ToList();
+                var blockItem = new DynamicRecordBlockItem(
+                    block.Block.Id,
+                    block.Block.Name,
+                    fieldDefinitions.Select(field =>
+                    {
+                        var savedValue = fieldKeysById.TryGetValue(field.Id, out var key) &&
+                                         _draftValuesByField.TryGetValue(key, out var valueJson)
+                            ? new FieldValue { ValueJson = valueJson }
+                            : null;
+                        return new DynamicRecordFieldItem(field, savedValue, _serializer);
+                    }));
+                Blocks.Add(blockItem);
+                foreach (var field in blockItem.Fields)
+                {
+                    _initialFieldValues[field.Id] = field.SerializeValue();
+                }
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+            OnPropertyChanged(nameof(IsBusy));
+        }
+    }
+
+    public TemplateDefinition CaptureDraftTemplate(string name, string entityType = "Client")
+    {
+        if (!_isDraft)
+        {
+            throw new InvalidOperationException("La fiche affichée n’est pas un brouillon.");
+        }
+
+        return new TemplateDefinition
+        {
+            Template = new EntityTemplate { Id = _templateId, Name = name, EntityType = entityType },
+            Blocks = Blocks.Select((block, blockOrder) => new BlockDefinitionModel
+            {
+                Block = new BlockDefinition
+                {
+                    Id = block.BlockDefinitionId,
+                    Name = block.Name,
+                    DisplayOrder = blockOrder
+                },
+                Fields = block.Fields.Select((field, fieldOrder) => new FieldDefinition
+                {
+                    Id = field.Id,
+                    BlockDefinitionId = block.BlockDefinitionId,
+                    Label = field.Label,
+                    FieldType = field.FieldType,
+                    DisplayOrder = fieldOrder,
+                    IsRequired = field.Definition.IsRequired,
+                    OptionsJson = field.Definition.OptionsJson
+                }).ToList()
+            }).ToList()
+        };
+    }
+
+    public IReadOnlyDictionary<Guid, string> CaptureDraftValues() => _isDraft
+        ? Blocks.SelectMany(block => block.Fields).ToDictionary(field => field.Id, field => field.SerializeValue())
+        : throw new InvalidOperationException("La fiche affichée n’est pas un brouillon.");
+
+    public void ResetDraft()
+    {
+        if (!_isDraft)
+        {
+            return;
+        }
+
+        _isDraft = false;
+        _recordId = Guid.Empty;
+        _templateId = Guid.Empty;
+        Blocks.Clear();
+        _initialFieldValues.Clear();
+        _draftValuesByField.Clear();
+    }
+
     public async Task<bool> SaveAsync(CancellationToken cancellationToken = default)
     {
-        if (_recordId == Guid.Empty || IsBusy)
+        if (IsBusy)
+        {
+            return false;
+        }
+
+        if (_isDraft)
+        {
+            return true;
+        }
+
+        if (_recordId == Guid.Empty)
         {
             return false;
         }
@@ -174,6 +308,20 @@ public sealed class ClientDynamicRecordViewModel(
         string? label,
         CancellationToken cancellationToken = default)
     {
+        if (_isDraft)
+        {
+            var definition = new FieldDefinition
+            {
+                Id = Guid.NewGuid(),
+                BlockDefinitionId = block.BlockDefinitionId,
+                Label = string.IsNullOrWhiteSpace(label) ? GetDefaultLabel(fieldType) : label.Trim(),
+                FieldType = fieldType,
+                DisplayOrder = block.Fields.Count
+            };
+            block.Fields.Add(new DynamicRecordFieldItem(definition, null, _serializer));
+            return;
+        }
+
         var field = await _formService.AddFieldAsync(
             block.BlockDefinitionId,
             string.IsNullOrWhiteSpace(label) ? GetDefaultLabel(fieldType) : label.Trim(),
@@ -187,6 +335,20 @@ public sealed class ClientDynamicRecordViewModel(
         string? name,
         CancellationToken cancellationToken = default)
     {
+        if (_isDraft)
+        {
+            var draftBlock = new BlockDefinition
+            {
+                Id = Guid.NewGuid(),
+                TemplateId = _templateId,
+                Name = string.IsNullOrWhiteSpace(name) ? "Nouveau bloc" : name.Trim(),
+                DisplayOrder = Blocks.Count
+            };
+            var draftItem = new DynamicRecordBlockItem(draftBlock.Id, draftBlock.Name, []);
+            Blocks.Add(draftItem);
+            return draftItem;
+        }
+
         var block = await _formService.AddBlockAsync(
             _templateId,
             string.IsNullOrWhiteSpace(name) ? "Nouveau bloc" : name.Trim(),
@@ -202,6 +364,12 @@ public sealed class ClientDynamicRecordViewModel(
         int offset,
         CancellationToken cancellationToken = default)
     {
+        if (_isDraft)
+        {
+            MoveLocalItem(Blocks, block, offset);
+            return;
+        }
+
         await _formService.MoveBlockAsync(_templateId, block.BlockDefinitionId, offset, cancellationToken);
         var index = Blocks.IndexOf(block);
         var target = Math.Clamp(index + offset, 0, Blocks.Count - 1);
@@ -217,6 +385,12 @@ public sealed class ClientDynamicRecordViewModel(
         DynamicRecordBlockItem block,
         CancellationToken cancellationToken = default)
     {
+        if (_isDraft)
+        {
+            Blocks.Remove(block);
+            return;
+        }
+
         await _formService.DeleteBlockAsync(block.BlockDefinitionId, cancellationToken);
         Blocks.Remove(block);
         await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
@@ -227,6 +401,12 @@ public sealed class ClientDynamicRecordViewModel(
         DynamicRecordFieldItem field,
         CancellationToken cancellationToken = default)
     {
+        if (_isDraft)
+        {
+            block.Fields.Remove(field);
+            return;
+        }
+
         await _formService.DeleteFieldAsync(field.Id, cancellationToken);
         block.Fields.Remove(field);
         await _automaticBackupService.SaveAfterChangeAsync(cancellationToken);
@@ -238,6 +418,12 @@ public sealed class ClientDynamicRecordViewModel(
         int offset,
         CancellationToken cancellationToken = default)
     {
+        if (_isDraft)
+        {
+            MoveLocalItem(block.Fields, field, offset);
+            return;
+        }
+
         await _formService.MoveFieldAsync(block.BlockDefinitionId, field.Id, offset, cancellationToken);
         var index = block.Fields.IndexOf(field);
         var target = Math.Clamp(index + offset, 0, block.Fields.Count - 1);
@@ -252,6 +438,11 @@ public sealed class ClientDynamicRecordViewModel(
 
     public async Task SaveTemplateChangesAsync(CancellationToken cancellationToken = default)
     {
+        if (_isDraft)
+        {
+            return;
+        }
+
         var template = await _formService.GetTemplateAsync(_templateId, cancellationToken)
             ?? throw new InvalidOperationException("Le modèle demandé n’existe pas.");
 
@@ -281,6 +472,21 @@ public sealed class ClientDynamicRecordViewModel(
         }
     }
 
+    private static void MoveLocalItem<T>(ObservableCollection<T> items, T item, int offset)
+    {
+        var index = items.IndexOf(item);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var target = Math.Clamp(index + offset, 0, items.Count - 1);
+        if (index != target)
+        {
+            items.Move(index, target);
+        }
+    }
+
     private static string GetDefaultLabel(FieldType fieldType) => fieldType switch
     {
         FieldType.ShortText => "Texte",
@@ -298,6 +504,12 @@ public sealed class ClientDynamicRecordViewModel(
         FieldType.Document => "Document",
         _ => "Nouveau champ"
     };
+
+    private static (FieldType Type, string Label) GetDraftFieldKey(DynamicRecordFieldItem field) =>
+        GetDraftFieldKey(field.FieldType, field.Label);
+
+    private static (FieldType Type, string Label) GetDraftFieldKey(FieldType fieldType, string? label) =>
+        (fieldType, string.IsNullOrWhiteSpace(label) ? string.Empty : label.Trim().ToUpperInvariant());
 }
 
 public sealed class DynamicRecordBlockItem(Guid blockDefinitionId, string name, IEnumerable<DynamicRecordFieldItem> fields) : ObservableObject

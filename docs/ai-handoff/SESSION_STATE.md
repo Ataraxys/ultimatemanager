@@ -17,6 +17,19 @@ Last updated: 2026-11-25
 - Required report: unique `.txt` in `docs/ai-handoff/inbox/` on a report-only `ai-handoff/report-data-stabilization` branch based on refreshed `develop`, per `AGENT_PROTOCOL.md`.
 - Mission file was published on the integration branch in commit `aea2fce96cca1f96647e2a8c4fef70520ddb20a1`.
 
+## Current implementation status — local, not yet committed
+
+- Starting implementation HEAD: `729d77eecd9a1662676eb33f172b38e8e51a74d0` on `integration/reconcile-feature-branches`; at last fetch, local and origin integration matched. `origin/develop` was `47b6dbf615cd62cdb9c5c0be018dda60310c826d`; integration was 22 commits ahead and 0 behind.
+- Local changes are not committed or pushed. They cover Workspace-scoped client data, coordinator-backed persistence, transactional client deletion/dynamic operations, Workspace-filtered backups, old Client-schema migration, and temporary client draft/template selection.
+- New temporary-database harness coverage added for atomic draft persistence/remapping, template A→B transfer and cancellation, Workspace isolation/client cascades, historical Client migration/idempotence, ZIP backup Workspace scope/temp cleanup, the `ClientEditViewModel.SaveAsync` creation path, dynamic block/field deletion cascades, and backup temp cleanup after missing attachment failure.
+- Latest verified harness: `dotnet run --project Tests/SQLiteCoordinatorHarness/SQLiteCoordinatorHarness.csproj -c Debug` — 49 PASS, 2 NOT_TESTED, 0 FAIL. The NOT_TESTED cases are close/release failure injection; the coordinator has no test seam for those paths.
+- Latest verified builds: `dotnet build UltimateManager.slnx -c Debug --no-restore` PASS (30 warnings; first parallel attempt failed/was interrupted, isolated rerun passed); `dotnet build UltimateManager.csproj -f net10.0-android -c Debug --no-restore` PASS; Android Release equivalent PASS. `git diff --check` on the local diff PASS. Manual UI/device test NOT RUN.
+- A review found and fixed a blocking `IsBusy` double-check: new-client `SaveAsync` now delegates before acquiring the edit path's busy flag. The regression test confirms exactly one atomic create and reload with the returned persisted TemplateId.
+- Current PR diff baseline was 85 files and 22 commits ahead of `develop`. A whole-PR `git diff --check origin/develop...HEAD` reports existing trailing whitespace in `docs/ai-handoff/outbox/20261124_MISSION-PR5-REVUE-COMPLETE-82-FICHIERS.md`, `docs/ai-handoff/outbox/20261125_MISSION-MAUI-DATA-STABILIZATION-INTEGRATE-DEVELOP.md`, and similar handoff-only lines; local working diff check was clean at last run. GitHub CLI `gh` is unavailable, so PR state/body/head cannot be verified or updated with that CLI.
+- Complete PR comparison against `develop` last showed 85 files and 22 commits ahead, 0 behind. `git diff --check origin/develop...HEAD` reports existing trailing whitespace in handoff mission documents; the worktree diff check is clean. The `gh` CLI is unavailable, so remote PR state/body cannot be read or updated through it.
+- Remaining before delivery: final review/commit only mission-owned files on integration (exclude the pre-existing user edit to `.github/copilot-instructions.md`); attempt authenticated push and update PR #5 only if available; do not merge while PR status or whole-PR P1/P2 safety remains unverified. Report-only branch/report publication and exact SHAs remain pending. Manual UI test remains NOT RUN.
+- Do not claim mission completion, publication, or merge until those remaining items are actually completed and verified.
+
 ## Previous Copilot QA report — findings to implement, not re-audit
 
 Report: `docs/ai-handoff/inbox/20261125-COPILOT-QA-PR5-FULL-REVIEW.txt`, branch `ai-handoff/report-copilot-pr5-full-review`, report commit `48f847392d526428df5e684c07d14270c400859a`.

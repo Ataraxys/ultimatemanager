@@ -1,4 +1,5 @@
 using UltimateManager.Models.DynamicForms;
+using UltimateManager.Models;
 
 namespace UltimateManager.Services;
 
@@ -10,9 +11,15 @@ public interface IDynamicFormService
 
     Task<EntityRecordModel?> GetRecordForExternalEntityAsync(Guid externalEntityId, CancellationToken cancellationToken = default);
 
-    Task<TemplateDefinition> CloneTemplateAsync(Guid sourceTemplateId, string name, CancellationToken cancellationToken = default);
+    Task<TemplateDefinition> CloneTemplateAsync(Guid sourceTemplateId, string name, CancellationToken cancellationToken = default, Guid? ownerClientId = null);
 
     Task<TemplateDefinition> EnsureClientTemplateAsync(Guid externalEntityId, Guid sourceTemplateId, CancellationToken cancellationToken = default);
+
+    Task<EntityRecordModel> CreateClientWithDraftAsync(
+        Client client,
+        TemplateDefinition draft,
+        IReadOnlyDictionary<Guid, string> fieldValues,
+        CancellationToken cancellationToken = default);
 
     Task<TemplateDefinition> CreateTemplateAsync(string name, string entityType = "Client", CancellationToken cancellationToken = default);
 

@@ -207,22 +207,30 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
                 return;
             }
 
-            await _viewModel.SaveStructureAsync();
-            if (!await _viewModel.SaveDynamicAsync())
+            if (isNewClient)
             {
-                await DisplayAlertAsync("Enregistrement impossible", "Les valeurs de la fiche n’ont pas pu être enregistrées.", "OK");
-                return;
+                if (!await _viewModel.SaveAsync())
+                {
+                    await DisplayAlertAsync("Enregistrement impossible", "La fiche client n’a pas pu être enregistrée.", "OK");
+                    return;
+                }
+            }
+            else
+            {
+                await _viewModel.SaveStructureAsync();
+                if (!await _viewModel.SaveDynamicAsync())
+                {
+                    await DisplayAlertAsync("Enregistrement impossible", "Les valeurs de la fiche n’ont pas pu être enregistrées.", "OK");
+                    return;
+                }
+
+                if (!await _viewModel.SaveAsync())
+                {
+                    await DisplayAlertAsync("Vérifier les champs", "Vérifiez le prénom et les coordonnées avant d’enregistrer.", "OK");
+                    return;
+                }
             }
 
-            if (!await _viewModel.SaveAsync())
-            {
-                await DisplayAlertAsync("Vérifier les champs", "Vérifiez le prénom et les coordonnées avant d’enregistrer.", "OK");
-                return;
-            }
-
-            var dynamicFormService = App.Services.GetRequiredService<Services.IDynamicFormService>();
-            var templateId = _viewModel.SelectedTemplateId;
-            await dynamicFormService.EnsureClientTemplateAsync(_viewModel.ClientId, templateId);
             await App.Services.GetRequiredService<Services.IAutomaticBackupService>().SaveAfterChangeAsync();
 
             if (isNewClient)
@@ -252,6 +260,7 @@ public partial class ClientEditPage : ContentPage, IQueryAttributable
             return;
         }
 
+        _viewModel.CancelDraft();
         await Shell.Current.GoToAsync("..");
     }
 

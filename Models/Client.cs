@@ -8,6 +8,9 @@ public sealed class Client
     [PrimaryKey]
     public Guid Id { get; set; }
 
+    [Indexed]
+    public Guid WorkspaceId { get; set; }
+
     public string FirstName { get; set; } = string.Empty;
 
     public string LastName { get; set; } = string.Empty;
